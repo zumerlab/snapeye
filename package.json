@@ -1,0 +1,36 @@
+{
+  "name": "@zumer/snapeye",
+  "version": "0.1.0",
+  "description": "A 50-line bridge that lets coding agents see a running web app. snapDOM client + tiny HTTP handler — that's it.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".":         "./src/index.js",
+    "./client":  "./src/client.js",
+    "./server":  "./src/server.js"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "snapdom",
+    "agent",
+    "ai",
+    "visual",
+    "screenshot",
+    "claude",
+    "regression",
+    "bridge",
+    "zumerlab"
+  ],
+  "author": "Juan Martin Muda - Zumerlab",
+  "license": "MIT",
+  "peerDependencies": {
+    "@zumer/snapdom": "^1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@zumer/snapdom": { "optional": false }
+  }
+}

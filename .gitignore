@@ -1,0 +1,4 @@
+node_modules/
+.snapeye/
+*.tgz
+.DS_Store

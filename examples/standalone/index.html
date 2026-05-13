@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>SnapEye · standalone example</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; min-height: 100vh;
+        display: grid; place-items: center;
+        font: 16px/1.5 ui-monospace, Menlo, monospace;
+        background: radial-gradient(ellipse at 50% 30%, #1a2540 0%, #0a0f1c 70%);
+        color: #d6e2f0;
+      }
+      .card {
+        padding: 40px 56px;
+        background: rgba(255,255,255,.04);
+        border: 1px solid rgba(255,255,255,.08);
+        border-radius: 14px;
+        backdrop-filter: blur(8px);
+        text-align: center;
+      }
+      .card h1 { margin: 0 0 8px; font-size: 36px; font-weight: 700; color: #ffd97a; }
+      .card p  { margin: 0 0 18px; color: #93a4bb; }
+      kbd {
+        display: inline-block; padding: 2px 8px;
+        background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12);
+        border-radius: 4px; font-size: 13px;
+      }
+      button {
+        margin-top: 12px; padding: 8px 18px;
+        font: inherit; cursor: pointer;
+        background: #ffd97a; color: #1a2540; border: none; border-radius: 6px;
+      }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "@zumer/snapdom":  "https://unpkg.com/@zumer/snapdom/dist/snapdom.mjs",
+          "@zumer/snapeye/client": "/src/client.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+
+    <div class="card">
+      <h1>Hello SnapEye 👁</h1>
+      <p>Press <kbd>Shift+S</kbd> to capture this page, or click the button.</p>
+      <p style="font-size:12px;opacity:.6">The PNG will land in <code>.snapeye/</code> next to the server.</p>
+      <button id="go">snap “hello”</button>
+    </div>
+
+    <script type="module">
+      import { snapdom }       from '@zumer/snapdom'
+      import { attachSnapEye } from '@zumer/snapeye/client'
+
+      const eye = attachSnapEye({ snapdom })
+
+      document.getElementById('go').addEventListener('click', () => eye.snap('hello'))
+    </script>
+  </body>
+</html>
