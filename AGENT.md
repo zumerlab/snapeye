@@ -19,8 +19,10 @@ added. The original wiring is still in zircleUI for reference.
 
 These came up while building it. They are deliberately out of scope.
 
-- **No baseline diffing.** That's `@zumer/snapdiff`. SnapEye captures;
-  diff is a separate concern that can sit on top.
+- **No diff engine in this repo.** The pixel diff is `@zumer/snapdiff`,
+  a peer dep. SnapEye's `/diff` endpoint just stores what the browser
+  computed (current PNG, diff PNG, stats JSON) and handles the
+  rotation of `X.png → X.prev.png`. The diff math lives in snapdiff.
 - **No navigation logic.** The client does not know how your app routes.
   It exposes `snap(name, target?)`. The consumer decides when to call it.
 - **No framework integration packaged here.** The handler is
@@ -37,16 +39,37 @@ These came up while building it. They are deliberately out of scope.
 
 ## The contract (don't break this)
 
-Three POST endpoints under a configurable prefix (default `/__snapeye__`):
+One GET + five POSTs under a configurable prefix (default `/__snapeye__`):
 
 ```
-POST  /__snapeye__/snap?name=X    image/png    → <dir>/X.png
-POST  /__snapeye__/dom?name=X     text/html    → <dir>/X.html
-POST  /__snapeye__/log            text/plain   → stdout `[browser] …`
+GET   /__snapeye__/prev?name=X                       → bytes of <dir>/X.png (404 if none)
+POST  /__snapeye__/snap?name=X    image/png          → <dir>/X.png
+POST  /__snapeye__/dom?name=X     text/html          → <dir>/X.html
+POST  /__snapeye__/map?name=X     application/json   → <dir>/X.png + <dir>/X.map.json
+POST  /__snapeye__/diff?name=X    application/json   → rotate X.png→X.prev.png, write X.png + X.diff.png + X.diff.json
+POST  /__snapeye__/log            text/plain         → stdout `[browser] …`
 ```
+
+Every endpoint accepts an optional `?namespace=NS` query param. When
+present (or when the handler is created with `namespace: 'NS'`), output
+is nested under `<dir>/NS/…`. This is the multi-agent isolation seam —
+two agents can capture in parallel without clobbering each other.
 
 `name` is sanitized to `[a-z0-9._-]`. Anything outside that gets
 replaced with `_`, and missing names fall back to `snap-<timestamp>`.
+`namespace` is sanitized to `[a-z0-9_-]` (no dots — prevents traversal).
+
+`/map` body is JSON `{ image?: dataURL, map: Array, dimensions: {width, height} }`
+— the shape produced by `result.toAgentMap()` from snapdom's `agent-map`
+plugin. When `image` is a `data:image/...;base64,…` URL, the handler
+decodes it and writes the annotated PNG alongside the JSON.
+
+`/diff` body is JSON `{ image: dataURL, diff: dataURL, stats: {...} }` —
+the client runs pixel-diff in the browser via `@zumer/snapdiff/diff`
+against the bytes returned by GET `/prev`, then POSTs the current image,
+the diff image, and the stats together. The server rotates the existing
+`X.png` to `X.prev.png` before writing the new one so the agent always
+has the before/after pair on disk.
 
 Any change to this contract is a breaking change. Add new endpoints
 instead of altering these.
@@ -55,8 +78,8 @@ instead of altering these.
 
 | File | Owns |
 |------|------|
-| `src/client.js` | snapDOM wrapper, error overlay, console mirror, `?snap=NAME` query trigger, `Shift+S` hotkey, `window.snapeye` shape |
-| `src/server.js` | Three endpoint handler, filename sanitisation, absolute-path resolution, optional `onSnap`/`onLog` hooks |
+| `src/client.js` | snapDOM wrapper, error overlay, console mirror, `?snap=` / `?snapmap=` / `?snapdiff=` query triggers, `Shift+S` hotkey, optional `agentMap` + `diffCanvas` plugin paths, `namespace` query suffix, `window.snapeye` shape |
+| `src/server.js` | Handler for `GET /prev` + `POST /snap, /dom, /map, /diff, /log`; filename + namespace sanitisation; absolute-path resolution; rotation of `X.png → X.prev.png` on diff; optional `onSnap`/`onMap`/`onDiff`/`onLog` hooks |
 | `src/index.js` | Re-exports — nothing else |
 | `examples/standalone/server.mjs` | Reference Node http integration; serves the repo root so importmap paths work |
 | `examples/standalone/index.html` | Proof-of-life page that proves the round-trip works |
@@ -150,7 +173,7 @@ mode work.
 In rough order of value:
 
 1. **Publish to npm.** `@zumer/snapeye@0.1.0`. peerDep on
-   `@zumer/snapdom@^1.9`.
+   `@zumer/snapdom@^2.12`.
 2. **Vite plugin.** `@zumer/snapeye-vite` — 20-line wrapper that calls
    `server.middlewares.use`. Probably belongs in its own tiny repo so
    the core stays dependency-free.

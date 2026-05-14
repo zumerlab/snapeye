@@ -28,7 +28,7 @@
   "author": "Juan Martin Muda - Zumerlab",
   "license": "MIT",
   "peerDependencies": {
-    "@zumer/snapdom": "^1.9.0"
+    "@zumer/snapdom": "^2.12.0"
   },
   "peerDependenciesMeta": {
     "@zumer/snapdom": { "optional": false }

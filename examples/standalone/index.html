@@ -1,64 +1,549 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>SnapEye · standalone example</title>
+    <title>SNAPEYE · station 00 · observing</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@200;300;400;500;700;800&display=swap" rel="stylesheet">
+
     <style>
-      :root { color-scheme: dark; }
+      /* ─── theme tokens ───────────────────────────────────────────── */
+      :root, [data-theme="dark"] {
+        --ink:         #0c0d10;
+        --ink-2:       #131418;
+        --paper:       #e8e2d3;
+        --paper-dim:   #8a8676;
+        --paper-faint: #4a473e;
+        --signal:      #ffcf3d;
+        --alert:       #ff5e3a;
+        --line:        rgba(232,226,211,.10);
+        --line-strong: rgba(232,226,211,.26);
+      }
+      [data-theme="light"] {
+        --ink:         #f4f0e7;
+        --ink-2:       #ebe6d8;
+        --paper:       #181a1e;
+        --paper-dim:   #5a584f;
+        --paper-faint: #b3ae9f;
+        --signal:      #a76800;
+        --alert:       #c4290d;
+        --line:        rgba(24,26,30,.14);
+        --line-strong: rgba(24,26,30,.32);
+      }
+
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; min-height: 100vh; }
       body {
-        margin: 0; min-height: 100vh;
-        display: grid; place-items: center;
-        font: 16px/1.5 ui-monospace, Menlo, monospace;
-        background: radial-gradient(ellipse at 50% 30%, #1a2540 0%, #0a0f1c 70%);
-        color: #d6e2f0;
+        background: var(--ink);
+        color: var(--paper);
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-weight: 400;
+        font-size: 13px;
+        line-height: 1.5;
+        letter-spacing: .005em;
+        -webkit-font-smoothing: antialiased;
       }
-      .card {
-        padding: 40px 56px;
-        background: rgba(255,255,255,.04);
-        border: 1px solid rgba(255,255,255,.08);
-        border-radius: 14px;
-        backdrop-filter: blur(8px);
-        text-align: center;
+
+      ::selection { background: var(--signal); color: var(--ink); }
+
+      .frame { max-width: 1280px; margin: 0 auto; padding: 22px 26px 28px; }
+
+      /* ─── status bar ─────────────────────────────────────────────── */
+      .status {
+        display: flex;
+        flex-wrap: nowrap;
+        align-items: baseline;
+        gap: 22px;
+        padding-bottom: 14px;
+        border-bottom: 1px solid var(--line-strong);
+        font-size: 10.5px;
+        letter-spacing: .22em;
+        text-transform: uppercase;
+        color: var(--paper-dim);
+        white-space: nowrap;
       }
-      .card h1 { margin: 0 0 8px; font-size: 36px; font-weight: 700; color: #ffd97a; }
-      .card p  { margin: 0 0 18px; color: #93a4bb; }
-      kbd {
-        display: inline-block; padding: 2px 8px;
-        background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12);
-        border-radius: 4px; font-size: 13px;
+      .status .spacer { flex: 1; }
+      .status .wordmark {
+        font-weight: 800;
+        font-size: 13px;
+        letter-spacing: .34em;
+        color: var(--paper);
       }
-      button {
-        margin-top: 12px; padding: 8px 18px;
-        font: inherit; cursor: pointer;
-        background: #ffd97a; color: #1a2540; border: none; border-radius: 6px;
+      .status .wordmark::before {
+        content: '◉';
+        color: var(--signal);
+        margin-right: 11px;
+        font-size: 11px;
+        position: relative; top: -.5px;
+      }
+      .status .sep { color: var(--paper-faint); }
+      .status .marker { color: var(--signal); }
+
+      /* ─── section labels ─────────────────────────────────────────── */
+      .section-label {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .32em;
+        text-transform: uppercase;
+        color: var(--paper-dim);
+        margin: 22px 0 10px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        white-space: nowrap;
+      }
+      .section-label .tick { color: var(--signal); font-size: 13px; }
+      .section-label .meta { color: var(--paper-faint); margin-left: auto; letter-spacing: .18em; }
+      .section-label .rule { flex: 1; height: 1px; background: var(--line); }
+
+      /* ─── main grid ──────────────────────────────────────────────── */
+      .main {
+        display: grid;
+        grid-template-columns: minmax(380px, 1fr) minmax(420px, 1.35fr);
+        gap: 28px;
+      }
+      @media (max-width: 940px) { .main { grid-template-columns: 1fr; } }
+
+      /* ─── routes panel ───────────────────────────────────────────── */
+      .routes {
+        border: 1px solid var(--line);
+        background: var(--ink-2);
+      }
+      .route {
+        display: block;
+        text-decoration: none;
+        color: inherit;
+        padding: 14px 18px 14px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+      .route:last-child { border-bottom: 0; }
+      .route:hover { background: var(--ink); }
+      .route:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--signal); }
+
+      .route__head {
+        display: grid;
+        grid-template-columns: 26px 1fr auto;
+        gap: 10px;
+        align-items: baseline;
+        margin-bottom: 4px;
+      }
+      .route__id   { color: var(--paper-faint); font-weight: 700; font-size: 10px; letter-spacing: .14em; }
+      .route__url  { color: var(--paper); font-weight: 500; font-size: 13.5px; }
+      .route__url .verb { color: var(--signal); font-weight: 700; margin-right: 8px; }
+      .route__url .arg  { color: var(--paper-dim); }
+      .route__tag  { font-size: 9.5px; letter-spacing: .26em; color: var(--paper-faint); text-transform: uppercase; }
+
+      .route__files {
+        list-style: none;
+        padding: 0;
+        margin: 0 0 0 36px;
+        font-size: 11.5px;
+        color: var(--paper-dim);
+      }
+      .route__files li { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; overflow: hidden; }
+      .route__files li::before { content: '↳'; color: var(--paper-faint); }
+      .route__files .new   { color: var(--signal); }
+      .route__files .alert { color: var(--alert); }
+      .route__files .note  { color: var(--paper-faint); margin-left: 6px; font-size: 11px; }
+
+      /* ─── target panel (capturable surface) ──────────────────────── */
+      .target {
+        position: relative;
+        border: 1px solid var(--line);
+        background: var(--ink-2);
+        padding: 26px;
+      }
+      .corner {
+        position: absolute;
+        width: 14px; height: 14px;
+        border: 1px solid var(--signal);
+        pointer-events: none;
+      }
+      .corner.tl { top:-1px;    left:-1px;    border-right: 0; border-bottom: 0; }
+      .corner.tr { top:-1px;    right:-1px;   border-left:  0; border-bottom: 0; }
+      .corner.bl { bottom:-1px; left:-1px;    border-right: 0; border-top:    0; }
+      .corner.br { bottom:-1px; right:-1px;   border-left:  0; border-top:    0; }
+
+      .target h3 {
+        margin: 0 0 4px;
+        font-size: 14px;
+        font-weight: 700;
+        letter-spacing: .02em;
+      }
+      .target .lede {
+        color: var(--paper-dim);
+        font-size: 12px;
+        margin: 0 0 22px;
+      }
+
+      .field {
+        display: grid;
+        grid-template-columns: 90px 1fr;
+        gap: 14px;
+        align-items: center;
+        margin-bottom: 11px;
+      }
+      .field label {
+        font-size: 10.5px;
+        letter-spacing: .2em;
+        text-transform: uppercase;
+        color: var(--paper-dim);
+      }
+      .field input[type="text"],
+      .field input[type="email"],
+      .field select {
+        width: 100%;
+        padding: 9px 12px;
+        background: var(--ink);
+        color: var(--paper);
+        border: 1px solid var(--line-strong);
+        border-radius: 0;
+        font: inherit;
+        font-size: 13px;
+      }
+      .field input:focus, .field select:focus {
+        outline: none;
+        border-color: var(--signal);
+      }
+      .field input::placeholder { color: var(--paper-faint); }
+      .field input[readonly]    { color: var(--paper-dim); }
+
+      .checks {
+        margin: 16px 0 6px;
+        padding: 14px 16px;
+        background: var(--ink);
+        border-left: 2px solid var(--signal);
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .checks label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--paper);
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .checks label.is-disabled { color: var(--paper-faint); cursor: not-allowed; }
+      .checks input[type="checkbox"] {
+        width: 14px; height: 14px;
+        accent-color: var(--signal);
+      }
+      .checks .note { color: var(--paper-faint); font-size: 11px; margin-left: 4px; }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 22px;
+      }
+      .btn {
+        padding: 9px 18px;
+        font: inherit;
+        font-size: 11px;
+        letter-spacing: .22em;
+        text-transform: uppercase;
+        cursor: pointer;
+        border: 1px solid var(--line-strong);
+        background: transparent;
+        color: var(--paper);
+        border-radius: 0;
+      }
+      .btn:hover { border-color: var(--paper); }
+      .btn.primary {
+        background: var(--signal);
+        color: var(--ink);
+        border-color: var(--signal);
+        font-weight: 700;
+      }
+      .btn.primary:hover { background: var(--paper); border-color: var(--paper); }
+      .btn.ghost { border-color: var(--line); color: var(--paper-dim); }
+      .btn[disabled] { opacity: .38; cursor: not-allowed; }
+      .btn[disabled]:hover { border-color: var(--line-strong); }
+      .btn[aria-pressed="true"] {
+        background: var(--ink);
+        color: var(--signal);
+        border-color: var(--signal);
+      }
+
+      .link {
+        align-self: center;
+        color: var(--signal);
+        text-decoration: none;
+        font-size: 12px;
+        border-bottom: 1px solid var(--signal);
+        padding-bottom: 1px;
+        margin-left: 4px;
+      }
+      .link:hover { color: var(--paper); border-bottom-color: var(--paper); }
+
+      /* ─── theme strip (the snapdiff pivot) ───────────────────────── */
+      .theme-strip {
+        margin-top: 24px;
+        padding-top: 18px;
+        border-top: 1px dashed var(--line-strong);
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        font-size: 10.5px;
+        letter-spacing: .18em;
+        text-transform: uppercase;
+        color: var(--paper-dim);
+      }
+      .theme-strip .hint { flex: 1; }
+      .theme-strip .hint b { color: var(--paper); font-weight: 700; }
+      .theme-toggle {
+        display: inline-flex;
+        border: 1px solid var(--line-strong);
+        background: var(--ink);
+      }
+      .theme-toggle button {
+        padding: 7px 13px;
+        background: transparent;
+        color: var(--paper-dim);
+        border: 0;
+        font: inherit;
+        font-size: 9.5px;
+        letter-spacing: .26em;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+      .theme-toggle button[aria-pressed="true"] {
+        background: var(--signal);
+        color: var(--ink);
+        font-weight: 700;
+      }
+
+      /* ─── legend / footer ────────────────────────────────────────── */
+      .legend {
+        margin-top: 26px;
+        padding-top: 14px;
+        border-top: 1px solid var(--line-strong);
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 24px;
+        font-size: 10.5px;
+        letter-spacing: .18em;
+        text-transform: uppercase;
+        color: var(--paper-dim);
+      }
+      .legend kbd {
+        display: inline-block;
+        padding: 2px 7px;
+        margin-right: 4px;
+        border: 1px solid var(--line-strong);
+        background: var(--ink-2);
+        color: var(--paper);
+        font: inherit;
+        font-size: 10px;
+        letter-spacing: .04em;
+      }
+      .legend .api { color: var(--paper); }
+      .legend .endpoint {
+        margin-left: auto;
+        color: var(--paper-faint);
+        letter-spacing: .12em;
       }
     </style>
+  </head>
+
+  <body>
+    <div class="frame">
+
+      <!-- ─── STATUS BAR ──────────────────────────────────────────── -->
+      <header class="status">
+        <span class="wordmark">SNAPEYE</span>
+        <span class="spacer"></span>
+        <span>STATION&nbsp;00</span>
+        <span class="sep">/</span>
+        <span><span class="marker">●</span>&nbsp;OBSERVING</span>
+        <span class="sep">/</span>
+        <span>HOST&nbsp;LOCALHOST:8090</span>
+      </header>
+
+      <!-- ─── MAIN GRID: ROUTES + TARGET ──────────────────────────── -->
+      <div class="main">
+
+        <!-- ─── ROUTES PANEL ─────────────────────────────────────── -->
+        <section>
+          <div class="section-label">
+            <span class="tick">▌</span><span>Routes</span>
+            <span class="rule"></span>
+            <span class="meta">click or open URL</span>
+          </div>
+
+          <nav class="routes">
+
+            <a class="route" href="?snap=home">
+              <div class="route__head">
+                <span class="route__id">01</span>
+                <span class="route__url"><span class="verb">GET</span>/?snap=<span class="arg">home</span></span>
+                <span class="route__tag">SNAP</span>
+              </div>
+              <ul class="route__files">
+                <li><span class="new">.snapeye/home.png</span></li>
+                <li>.snapeye/home.html</li>
+              </ul>
+            </a>
+
+            <a class="route" href="?snapmap=home">
+              <div class="route__head">
+                <span class="route__id">02</span>
+                <span class="route__url"><span class="verb">GET</span>/?snapmap=<span class="arg">home</span></span>
+                <span class="route__tag">MAP</span>
+              </div>
+              <ul class="route__files">
+                <li><span class="new">.snapeye/home.png</span><span class="note">badges baked in</span></li>
+                <li>.snapeye/home.map.json<span class="note">{i, n, r, b, s?}[]</span></li>
+              </ul>
+            </a>
+
+            <a class="route" href="?snapdiff=home">
+              <div class="route__head">
+                <span class="route__id">03</span>
+                <span class="route__url"><span class="verb">GET</span>/?snapdiff=<span class="arg">home</span></span>
+                <span class="route__tag">DIFF</span>
+              </div>
+              <ul class="route__files">
+                <li>.snapeye/home.png<span class="note">new capture</span></li>
+                <li>.snapeye/home.prev.png<span class="note">rotated from last</span></li>
+                <li><span class="alert">.snapeye/home.diff.png</span></li>
+                <li>.snapeye/home.diff.json<span class="note">{ratio, mismatched, …}</span></li>
+              </ul>
+            </a>
+
+            <a class="route" href="?snap=home&amp;namespace=agent-a">
+              <div class="route__head">
+                <span class="route__id">04</span>
+                <span class="route__url"><span class="verb">GET</span>/?snap=<span class="arg">home</span>&amp;namespace=<span class="arg">agent-a</span></span>
+                <span class="route__tag">NS</span>
+              </div>
+              <ul class="route__files">
+                <li><span class="new">.snapeye/agent-a/home.png</span></li>
+                <li>.snapeye/agent-a/home.html</li>
+              </ul>
+            </a>
+
+          </nav>
+        </section>
+
+        <!-- ─── TARGET PANEL: CAPTUREABLE SURFACE ─────────────────── -->
+        <section>
+          <div class="section-label">
+            <span class="tick">▌</span><span>Target</span>
+            <span class="rule"></span>
+            <span class="meta">surface · form · stateful</span>
+          </div>
+
+          <div class="target">
+            <span class="corner tl"></span><span class="corner tr"></span>
+            <span class="corner bl"></span><span class="corner br"></span>
+
+            <h3>Provisioning manifest</h3>
+            <p class="lede">A small surface with varied roles — buttons, checkboxes, a select, an aria-pressed toggle — so <code>snapMap</code> returns an interesting agent-map and <code>snapDiff</code> has stateful pixels to compare across iterations.</p>
+
+            <div class="field">
+              <label for="op-email">Operator</label>
+              <input id="op-email" type="email" value="ada@station.lo" placeholder="email">
+            </div>
+
+            <div class="field">
+              <label for="op-band">Band</label>
+              <select id="op-band">
+                <option>VHF · 144 MHz</option>
+                <option>UHF · 432 MHz</option>
+                <option selected>SHF · 2.4 GHz</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="op-id">Session</label>
+              <input id="op-id" type="text" value="S/04F2-A1" readonly>
+            </div>
+
+            <div class="checks">
+              <label><input type="checkbox" checked> Mirror console to <code>/__snapeye__/log</code></label>
+              <label><input type="checkbox"> Capture on every commit <span class="note">— rapid-loop</span></label>
+              <label class="is-disabled"><input type="checkbox" disabled> Transmit to remote station <span class="note">— offline</span></label>
+            </div>
+
+            <div class="actions">
+              <button class="btn primary" type="button">Engage</button>
+              <button class="btn"         type="button" id="btn-hold" aria-pressed="false">Hold</button>
+              <button class="btn ghost"   type="button" aria-expanded="false">Advanced ▾</button>
+              <button class="btn"         type="button" disabled>Disengage</button>
+              <a class="link" href="#manual">read the manual ↗</a>
+            </div>
+
+            <div class="theme-strip">
+              <span class="hint">surface theme — flip then re-run <b>?snapdiff=home</b> to write a real diff</span>
+              <div class="theme-toggle" role="group" aria-label="surface theme">
+                <button id="t-dark"  aria-pressed="true">Dark</button>
+                <button id="t-light" aria-pressed="false">Light</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- ─── LEGEND ──────────────────────────────────────────────── -->
+      <footer class="legend">
+        <span><kbd>Shift</kbd><kbd>S</kbd> fires snap() on the current target</span>
+        <span>programmatic: <span class="api">window.snapeye</span>.snap(name) · .snapMap(name) · .snapDiff(name)</span>
+        <span class="endpoint">/__snapeye__/*</span>
+      </footer>
+
+    </div>
+
     <script type="importmap">
       {
         "imports": {
-          "@zumer/snapdom":  "https://unpkg.com/@zumer/snapdom/dist/snapdom.mjs",
+          "@zumer/snapdom":  "https://unpkg.com/@zumer/snapdom@2.12.0/dist/snapdom.mjs",
+          "@zumer/snapdom-plugins/agent-map": "https://unpkg.com/@zumer/snapdom-plugins@2.1.0/agent-map.js",
+          "@zumer/snapdiff/diff": "https://unpkg.com/@zumer/snapdiff@0.2.0/src/diff.js",
           "@zumer/snapeye/client": "/src/client.js"
         }
       }
     </script>
-  </head>
-  <body>
-
-    <div class="card">
-      <h1>Hello SnapEye 👁</h1>
-      <p>Press <kbd>Shift+S</kbd> to capture this page, or click the button.</p>
-      <p style="font-size:12px;opacity:.6">The PNG will land in <code>.snapeye/</code> next to the server.</p>
-      <button id="go">snap “hello”</button>
-    </div>
 
     <script type="module">
       import { snapdom }       from '@zumer/snapdom'
+      import { agentMap }      from '@zumer/snapdom-plugins/agent-map'
+      import { diffCanvas }    from '@zumer/snapdiff/diff'
       import { attachSnapEye } from '@zumer/snapeye/client'
 
-      const eye = attachSnapEye({ snapdom })
+      attachSnapEye({ snapdom, agentMap, diffCanvas })
 
-      document.getElementById('go').addEventListener('click', () => eye.snap('hello'))
+      // Theme toggle persists across reloads via localStorage — that's how
+      // snapDiff sees a real pixel-diff after the user flips the toggle and
+      // re-runs ?snapdiff=home.
+      const root = document.documentElement
+      const dBtn = document.getElementById('t-dark')
+      const lBtn = document.getElementById('t-light')
+      const setTheme = (t) => {
+        root.dataset.theme = t
+        dBtn.setAttribute('aria-pressed', String(t === 'dark'))
+        lBtn.setAttribute('aria-pressed', String(t === 'light'))
+        try { localStorage.setItem('snapeye-demo-theme', t) } catch {}
+      }
+      dBtn.addEventListener('click', () => setTheme('dark'))
+      lBtn.addEventListener('click', () => setTheme('light'))
+      try {
+        const stored = localStorage.getItem('snapeye-demo-theme')
+        if (stored === 'dark' || stored === 'light') setTheme(stored)
+      } catch {}
+
+      // aria-pressed toggle so agent-map's state extractor sees a real flip
+      const hold = document.getElementById('btn-hold')
+      hold.addEventListener('click', () => {
+        hold.setAttribute('aria-pressed', hold.getAttribute('aria-pressed') === 'true' ? 'false' : 'true')
+      })
     </script>
   </body>
 </html>
