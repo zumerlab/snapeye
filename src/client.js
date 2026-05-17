@@ -1,6 +1,6 @@
 /**
  * SnapEye client — runs in the browser, captures the DOM with snapDOM,
- * and POSTs PNG / HTML / log lines to the SnapEye server handler.
+ * and POSTs the PNG (plus any console output) to the SnapEye server.
  *
  * Designed for one purpose: let a coding agent (Claude Code, Cursor,
  * Aider, …) see what's on screen by reading files from disk.
@@ -10,7 +10,7 @@
  *   const eye = attachSnapEye({ snapdom })
  *   eye.snap('home')
  *
- * The contract is intentionally tiny — three POST endpoints. Any web
+ * The contract is intentionally tiny — two POST endpoints. Any web
  * stack can expose them (see ../server.js for a Node-http handler).
  */
 
@@ -67,10 +67,6 @@ export function attachSnapEye (userOpts = {}) {
     try {
       const blob = await opts.snapdom.toBlob(target, opts.snapdomOptions)
       await post(`snap?name=${encodeURIComponent(name)}`, blob, { 'content-type': 'image/png' })
-      // Also dump the DOM HTML — useful when the image looks wrong.
-      if (target instanceof Element) {
-        await post(`dom?name=${encodeURIComponent(name)}`, target.outerHTML, { 'content-type': 'text/html' })
-      }
       return { name }
     } finally {
       hidden.forEach(([el, d]) => { el.style.display = d })

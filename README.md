@@ -1,35 +1,59 @@
-# 👁 SnapEye
+# SnapEye
 
-> **A 50-line bridge that lets a coding agent _see_ your running web app.**
-> Two files. snapDOM in the browser, a tiny HTTP handler on the server,
-> PNG and DOM dumps written to disk where any agent can read them.
+SnapEye gives an AI coding agent eyes on a running web app.
 
-No headless browser. No Playwright. No baselines. No framework.
-Just a contract.
+It is a tiny localhost bridge:
 
----
+1. The browser captures DOM with `@zumer/snapdom`.
+2. The browser POSTs a PNG to the dev server.
+3. The server writes `.snapeye/<name>.png`.
+4. The agent reads that PNG and keeps editing.
 
-## Why
+No bundled browser automation. No baseline diffing. No framework runtime.
+Just a client helper and a two-endpoint Node HTTP handler.
 
-Coding agents (Claude Code, Cursor, Aider, Copilot Workspace, OpenDevin…)
-can read files but not look at a browser. The result: a category of bugs
-they're blind to — layout drift, broken theming, components rendered at
-0×0 because of a CSS regression. They write code, you re-load, they ask
-you what they see.
+For an agent, this is not a full visual testing stack; it is the cheap
+feedback loop that catches the common "I changed UI but cannot see it"
+case while leaving navigation, clicks, auth, and pixel-perfect testing to
+the host project.
 
-SnapEye closes that loop. The agent runs an `npm run dev`, opens a URL,
-the page captures itself with [`@zumer/snapdom`](https://github.com/zumerlab/snapdom)
-and POSTs the result back to the dev server, which drops a `.png` next to
-the agent's filesystem. The agent reads the PNG, sees what's wrong, edits,
-iterates.
+## Agent Contract
 
-It is **not** a visual-regression tool (use
-[`@zumer/snapdiff`](https://github.com/zumerlab/snapdiff) for that, on top
-of SnapEye), and it is **not** a screenshot service (use Playwright if
-you need fidelity). It is the **smallest possible bridge** that gives an
-agent eyes.
+You are an AI coding agent in a repo with SnapEye wired into the dev app.
+Your job is to trigger captures, read the PNGs, and use what you see to
+iterate on UI work.
 
----
+The server owns two POST endpoints under `/__snapeye__`:
+
+| Method | Path                       | Body         | Side effect                     |
+| ------ | -------------------------- | ------------ | ------------------------------- |
+| POST   | `/__snapeye__/snap?name=X` | `image/png`  | Writes `<dir>/X.png`            |
+| POST   | `/__snapeye__/log`         | `text/plain` | Prints stdout as `[browser] ...` |
+
+`name` is sanitized to `[a-z0-9._-]`; invalid characters become `_`.
+Missing names become `snap-<timestamp>`. `<dir>` defaults to `.snapeye`
+unless the server config overrides it.
+
+This is the stable contract. Anything that produces these POSTs is a
+valid client.
+
+## Fast Path
+
+If SnapEye is already installed in the repo:
+
+```sh
+open "http://localhost:8080/?snap=home"
+```
+
+Then read:
+
+```text
+.snapeye/home.png
+```
+
+If the PNG does not appear, inspect the dev server stdout. Browser
+console output should be mirrored as `[browser] ...` lines when
+`forwardConsole` is enabled.
 
 ## Install
 
@@ -37,22 +61,30 @@ agent eyes.
 npm install --save-dev @zumer/snapeye @zumer/snapdom
 ```
 
-`@zumer/snapdom` is a peer dependency. Bring your own copy.
+`@zumer/snapdom` is a required peer dependency.
 
----
+## Browser Setup
 
-## Setup
-
-**Browser** — anywhere in your app:
+Add this somewhere in the app's client bundle:
 
 ```js
-import { snapdom }       from '@zumer/snapdom'
+import { snapdom } from '@zumer/snapdom'
 import { attachSnapEye } from '@zumer/snapeye/client'
 
 attachSnapEye({ snapdom })
 ```
 
-**Server** — your dev server, whatever it is:
+This attaches:
+
+```js
+window.snapeye.snap(name, target?)
+window.snapeye.log(level, ...args)
+window.snapeye.options
+```
+
+## Server Setup
+
+Mount the handler before the app's own routing:
 
 ```js
 import { createServer } from 'node:http'
@@ -62,72 +94,73 @@ const snapEye = createSnapEyeHandler({ dir: '.snapeye' })
 
 createServer(async (req, res) => {
   if (await snapEye(req, res)) return
-  // … your own routing …
+  // host app routing goes here
 }).listen(8080)
 ```
 
-That's it. Hit `http://localhost:8080/?snap=home`, then read
-`.snapeye/home.png`. Or, from inside the app:
+The handler signature is:
 
-```js
-window.snapeye.snap('hero')
-window.snapeye.snap('checkout-step-2', document.querySelector('.checkout'))
+```ts
+(req: import('node:http').IncomingMessage,
+ res: import('node:http').ServerResponse) => Promise<boolean>
 ```
 
-Or press <kbd>Shift+S</kbd>.
+It returns `true` when it handled the request.
 
----
+## Trigger Captures
 
-## What the agent gets
+Use whichever path is available in the environment.
 
-Each call produces:
-
-| File                  | Content                                          |
-|-----------------------|--------------------------------------------------|
-| `<dir>/<name>.png`    | Raster capture of the target element             |
-| `<dir>/<name>.html`   | The element's `outerHTML` at capture time        |
-| Terminal              | `console.log/.warn/.error` mirrored as `[browser] …` |
-
-The agent can open the PNG with its multimodal `Read` tool, the HTML to
-inspect computed structure, and the terminal log to catch runtime errors
-without DevTools.
-
----
-
-## The contract
-
-Three POST endpoints under a configurable prefix (default `/__snapeye__`).
-Anyone can implement the server side in 30 lines of any language; the
-included `createSnapEyeHandler` is the Node reference implementation.
-
-| Endpoint                          | Body          | Side effect                                |
-|-----------------------------------|---------------|--------------------------------------------|
-| `POST /__snapeye__/snap?name=X`   | `image/png`   | Write `<dir>/X.png`                        |
-| `POST /__snapeye__/dom?name=X`    | `text/html`   | Write `<dir>/X.html`                       |
-| `POST /__snapeye__/log`           | `text/plain`  | Echo to server stdout as `[browser] …`     |
-
-Filenames are sanitized to `[a-z0-9._-]`. Unknown names fall back to
-`snap-<timestamp>`.
-
----
-
-## Framework integration
-
-The handler is a `(req, res) => Promise<boolean>` — it returns `true` if
-it owned the request.
-
-### Express / Connect
+```sh
+# URL trigger, useful for agents
+open "http://localhost:8080/?snap=home"
+```
 
 ```js
-app.use(async (req, res, next) => {
-  if (!(await snapEye(req, res))) next()
+// Programmatic capture
+await window.snapeye.snap('hero')
+await window.snapeye.snap('checkout', document.querySelector('.checkout'))
+```
+
+```text
+Shift + S captures the default target.
+```
+
+After capture, read `.snapeye/<name>.png`.
+
+## Client Options
+
+```js
+attachSnapEye({
+  snapdom,                         // required
+  endpoint: '/__snapeye__',        // must match server prefix
+  autoOnQuery: true,               // ?snap=foo captures after load
+  forwardConsole: true,            // mirrors console.* to /log
+  errorOverlay: true,              // top bar for errors/rejections
+  defaultTarget: () => document.documentElement,
+  hideSelectors: ['.dev-only'],    // temporarily hidden during capture
+  snapdomOptions: { dpr: 1, scale: 1 },
+  hotkey: 'S'                      // Shift + S; set null to disable
 })
 ```
+
+## Server Options
+
+```js
+createSnapEyeHandler({
+  dir: '.snapeye',
+  prefix: '/__snapeye__',
+  log: (line) => console.log(line), // pass null to silence
+  onSnap: ({ name, path, bytes }) => {},
+  onLog: ({ line }) => {}
+})
+```
+
+## Framework Integration
 
 ### Vite
 
 ```js
-// vite.config.js
 import { createSnapEyeHandler } from '@zumer/snapeye/server'
 
 export default {
@@ -143,89 +176,67 @@ export default {
 }
 ```
 
-### Hono / Bun
+### Express / Connect
 
 ```js
 const snapEye = createSnapEyeHandler({ dir: '.snapeye' })
-app.all('/__snapeye__/*', async (c) => {
-  const handled = await snapEye(c.req.raw, c.res)
-  return handled ? c.body(null) : c.notFound()
+
+app.use(async (req, res, next) => {
+  if (!(await snapEye(req, res))) next()
 })
 ```
 
----
+Do not pass Fetch `Request`/`Response` objects directly to this handler.
+It expects Node `IncomingMessage` and `ServerResponse`. Fetch-native
+runtimes need a small adapter or a separate handler implementation.
 
-## Client options
+## Agent Loop
 
-```js
-attachSnapEye({
-  snapdom,                         // required
-  endpoint: '/__snapeye__',        // must match server prefix
-  autoOnQuery: true,               // ?snap=foo triggers eye.snap('foo')
-  forwardConsole: true,            // mirror console.* to /log
-  errorOverlay: true,              // top-bar overlay for window.onerror
-  defaultTarget: () => document.documentElement,
-  hideSelectors: ['.dev-only'],    // hidden during the capture
-  snapdomOptions: { dpr: 1, scale: 1 },
-  hotkey: 'S'                      // null to disable; Shift + key
-})
-```
-
-Returns `{ snap(name, target?), log(level, …args), options }`. Also
-attached as `window.snapeye`.
-
----
-
-## Server options
-
-```js
-createSnapEyeHandler({
-  dir: '.snapeye',                 // output directory (relative to cwd)
-  prefix: '/__snapeye__',
-  log: (line) => console.log(line),// pass null to silence
-  onSnap: ({ name, path, bytes }) => {},
-  onLog:  ({ line }) => {}
-})
-```
-
----
-
-## Iterating from an agent
-
-A typical loop for a coding agent driving the project:
+Use this loop when editing UI:
 
 ```bash
-# 1. Restart dev server
-pkill -f "your-dev-server" || true
+# 1. Start fresh
 rm -rf .snapeye
 npm run dev > /tmp/dev.log 2>&1 &
 
-# 2. Trigger a capture (and any in-page navigation)
+# 2. Trigger the route
 open "http://localhost:8080/?snap=home"
 
-# 3. Wait, then read the result
-sleep 2
-# (the agent does: Read .snapeye/home.png)
+# 3. Read the result
+# .snapeye/home.png
 ```
 
-For multi-route capture, drive the navigation yourself inside the app
-(`router.push(route)` → `window.snapeye.snap(route.name)` →
-`afterRender` →  next). SnapEye intentionally does **not** know how
-your app navigates.
+If the capture is stale or missing:
 
----
+- Check `/tmp/dev.log` for `[browser] ...` output.
+- Confirm the app loaded the client setup.
+- Confirm server `prefix` matches client `endpoint`.
+- Confirm the output directory is the one you are reading.
 
-## What it does not do
+SnapEye intentionally does not navigate your app. For multi-route
+captures, drive routing yourself and call `window.snapeye.snap(name)`
+after each route has rendered.
 
-- **No baseline diffing.** Pair with `@zumer/snapdiff` if you want that.
-- **No headless mode.** A tab needs to be open. For CI, drive a headless
-  browser yourself (Playwright/Puppeteer) — they speak the same HTTP
-  contract.
-- **No auth.** The endpoints are unauthenticated. Mount them only on
-  your local dev server.
+## What It Does Not Do
 
----
+- No visual regression baseline. Use `@zumer/snapdiff` or a recipe.
+- No bundled headless mode. Drive Playwright/Puppeteer yourself if needed.
+- No authentication. Mount on localhost/dev servers only.
+- No Fetch-native server adapter in core.
+- No TypeScript declarations yet.
+
+## Recipes
+
+The core stays small. Optional patterns live in `RECIPES.md`:
+
+- `agent-map`: annotated Set-of-Mark PNG plus element metadata JSON.
+- `snapdiff`: compare the current capture with the previous one.
+- `namespace`: isolate multiple agents writing to the same server.
 
 ## License
 
-[MIT](LICENSE) · © Juan Martín Muda · [Zumerlab](https://github.com/zumerlab)
+[MIT](LICENSE) - (c) [Zumerlab](https://github.com/zumerlab)
+
+## For Humans
+
+SnapEye is useful if you want an agent to verify real rendered UI without asking you to describe the screen: wire the client into your dev page, mount the server handler on localhost, open a route with `?snap=name`, and the agent gets a PNG it can inspect; if you need pixel-perfect browser screenshots, visual regression history, auth, or navigation orchestration, use Playwright or a dedicated visual-testing tool alongside SnapEye rather than expanding the core.

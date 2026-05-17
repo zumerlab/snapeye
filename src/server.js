@@ -21,16 +21,16 @@
  *
  * Endpoints (mounted under `prefix`):
  *   POST /snap?name=X     image/png  →  <dir>/<X>.png
- *   POST /dom?name=X      text/html  →  <dir>/<X>.html
  *   POST /log             text/plain →  stdout as `[browser] …`
  *
- * Filenames are sanitized to `[a-z0-9._-]`.
+ * Filenames are sanitized to `[a-z0-9._-]`. Missing names fall back to
+ * `snap-<timestamp>`. Anything else is a 404.
  */
 import { writeFile, mkdir } from 'node:fs/promises'
 import { resolve, join, dirname } from 'node:path'
 
 const DEFAULTS = {
-  /** Directory (relative to cwd) where PNG/HTML are written. */
+  /** Directory (relative to cwd) where PNGs are written. */
   dir: '.snapeye',
   /** Path prefix the client uses. Must match `endpoint` on the client. */
   prefix: '/__snapeye__',
@@ -72,16 +72,6 @@ export function createSnapEyeHandler (userOpts = {}) {
         if (opts.onSnap) opts.onSnap({ name, path, bytes: body.length })
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ ok: true, name, path: `${opts.dir}/${name}.png` }))
-        return true
-      }
-
-      if (route === 'dom') {
-        const body = await readBody(req)
-        const path = join(outDir, `${name}.html`)
-        await mkdir(dirname(path), { recursive: true })
-        await writeFile(path, body)
-        if (opts.log) opts.log(`📄 snapeye → ${path}`)
-        res.writeHead(204); res.end()
         return true
       }
 

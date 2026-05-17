@@ -2,3 +2,6 @@ node_modules/
 .snapeye/
 *.tgz
 .DS_Store
+examples/
+.github/smoke/
+.github/workflows/smoke.yml

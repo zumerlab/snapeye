@@ -1,7 +1,7 @@
 {
   "name": "@zumer/snapeye",
   "version": "0.1.0",
-  "description": "A 50-line bridge that lets coding agents see a running web app. snapDOM client + tiny HTTP handler — that's it.",
+  "description": "A tiny bridge that lets a coding agent see your running web app. snapDOM client + a two-endpoint HTTP handler — that's it.",
   "type": "module",
   "main": "./src/index.js",
   "exports": {
@@ -21,16 +21,37 @@
     "visual",
     "screenshot",
     "claude",
-    "regression",
+    "cursor",
+    "aider",
     "bridge",
     "zumerlab"
   ],
   "author": "Juan Martin Muda - Zumerlab",
   "license": "MIT",
+  "scripts": {
+    "bump:dry": "npx @zumerbox/bump -d",
+    "bump":     "npx @zumerbox/bump && npx @zumerbox/changelog",
+    "prebuild": "git add CHANGELOG.md && git commit -m \"Bumped version\" && git push --follow-tags",
+    "build":    "npm pack"
+  },
+  "homepage": "https://github.com/zumerlab/snapeye#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zumerlab/snapeye.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zumerlab/snapeye/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "peerDependencies": {
-    "@zumer/snapdom": "^1.9.0"
+    "@zumer/snapdom": "^2.12.0"
   },
   "peerDependenciesMeta": {
     "@zumer/snapdom": { "optional": false }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
