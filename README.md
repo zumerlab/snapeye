@@ -2,9 +2,9 @@
 
 **Gives an AI coding agent eyes on a running web app.**
 
-One `?snap=name` URL → PNG on disk → the agent reads it and keeps editing.
+URL to PNG on disk → the agent reads it and keeps editing.
 No bundled browser automation, no baseline diffing, no framework runtime.
-A snapDOM client + a two-endpoint HTTP handler — that's it.
+A [snapDOM](https://github.com/zumerlab/snapdom) client + a two-endpoint HTTP handler — that's it.
 
 [Quickstart](#quickstart) ·
 [AGENTS.md snippet](#add-to-your-agentsmd) ·
