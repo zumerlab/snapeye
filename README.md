@@ -265,7 +265,7 @@ curl http://localhost:5173/__snapeye/health
 {
   "status": "ok",
   "name": "@zumer/snapeye",
-  "version": "0.2.0",
+  "version": "<package-version>",
   "protocolVersion": 1,
   "artifactRoot": ".snapeye",
   "artifactRootResolved": "/repo/.snapeye"

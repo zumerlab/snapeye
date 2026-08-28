@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import { access, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createRequire } from 'node:module'
 import { decodeBaselineEnvelope, encodeBaselineEnvelope } from '../../src/core/envelope.js'
 import { buildResult } from '../../src/core/result.js'
 import { createFsArtifactStore } from '../../src/node/fs-store.js'
@@ -11,6 +12,10 @@ import {
   BASELINE_TYPE,
   createSnapEyeHttpHandler
 } from '../../src/node/http-handler.js'
+
+// Read the real version: hardcoding it here means every release bump fails
+// the suite for a reason that has nothing to do with the contract.
+const { version: VERSION } = createRequire(import.meta.url)('../../package.json')
 
 const TOKEN = 'snapeye-test-token-1234567890'
 const MAX_REQUEST_BYTES = 512
@@ -65,7 +70,7 @@ describe('SnapEye HTTP handler', () => {
     expect(await response.json()).toEqual({
       status: 'ok',
       name: '@zumer/snapeye',
-      version: '0.2.0',
+      version: VERSION,
       protocolVersion: 1,
       artifactRoot: '.snapeye',
       // The configured root is relative to the dev server's project root; a CLI

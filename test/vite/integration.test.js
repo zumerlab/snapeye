@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { build, createServer } from 'vite'
 import { chromium } from 'playwright-core'
 import { spawn } from 'node:child_process'
+import { createRequire } from 'node:module'
 import {
   access,
   mkdir,
@@ -17,6 +18,10 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { snapeye } from '../../src/vite.js'
+
+// Read the real version: hardcoding it means every release bump fails the
+// suite for a reason that has nothing to do with the contract.
+const { version: VERSION } = createRequire(import.meta.url)('../../package.json')
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixtureRoot = join(here, '..', 'fixtures', 'vite-app')
@@ -78,7 +83,7 @@ describe.skipIf(!chromePath).sequential('Vite integration', () => {
     expect(await response.json()).toEqual({
       status: 'ok',
       name: '@zumer/snapeye',
-      version: '0.2.0',
+      version: VERSION,
       protocolVersion: 1,
       artifactRoot,
       // Absolute, so a CLI invoked from anywhere finds the artifacts.
