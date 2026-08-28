@@ -1,6 +1,6 @@
 {
   "name": "@zumer/snapeye",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Capture, compare, and record deterministic visual artifacts for coding agents.",
   "type": "module",
   "main": "./src/index.js",
