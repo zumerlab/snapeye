@@ -1,123 +1,151 @@
-# SnapEye — contributor manual
+# SnapEye contributor guide
 
-You are an AI agent about to modify this repo. Read this before
-touching anything. For everything user-facing (contract, install,
-options, framework integration) **go to
-[`README.md`](README.md)** — it is the source of truth and is also
-written for AI agents. This file is the diff: what only matters when
-you're changing the codebase.
+SnapEye is a deterministic visual toolbelt for coding agents:
 
-## Origin
+> Capture. Compare. Record. Visual tools for coding agents.
 
-SnapEye was extracted from an ad-hoc pattern in a host project where
-an AI agent needed to see the rendered UI: snapDOM in the page, a few
-HTTP endpoints in the dev server, and a directory the agent could
-`Read`. This package is that pattern pulled out into its own package —
-**nothing else added**.
+It is not an agent. Keep models, prompts, navigation, clicks, authentication,
+cloud storage, CI orchestration, MCP, dashboards, and PR comments out of this
+package.
 
-## What we explicitly decided NOT to do
+## Architecture
 
-These came up while building it. They are out of scope **on purpose**.
-If you're about to add one, stop and check whether it belongs as a
-recipe ([`RECIPES.md`](RECIPES.md)) or a sibling package instead.
-
-- **No diff engine.** Pixel diff is `@zumer/snapdiff`. SnapEye captures.
-- **No navigation logic.** The client exposes `snap(name, target?)`.
-  The consumer decides when to call it.
-- **No bundled framework wrappers.** The handler is
-  `(req, res) => Promise<boolean>`. Vite/Express integration is
-  3–5 lines in `README.md`.
-- **No auth.** Endpoints are unauthenticated. Mount on localhost only.
-- **No headless mode in the package.** A consumer can drive a headless
-  browser themselves; the contract is HTTP.
-- **No bundler.** Hand-written ESM. Adding a build step would cost more
-  than it saves. Hand-rolled `.d.ts` can ship later if there's demand.
-
-## The contract — DO NOT BREAK IT
-
-See [`README.md` § Contract](README.md#contract) for the source of
-truth. Two POST endpoints, sanitised `[a-z0-9._-]` names. Any change
-to that table is a breaking change — add new endpoints instead of
-altering existing ones. Experimental extensions live on the
-[`agent-modes`](https://github.com/zumerlab/snapeye/tree/agent-modes)
-branch and stay there until one earns adoption.
-
-## Files and what they own
-
-| File | Owns |
-|------|------|
-| `src/client.js` | snapDOM wrapper, error overlay, console mirror, `?snap=NAME` query trigger, `Shift+S` hotkey, `window.snapeye` shape |
-| `src/server.js` | Two-endpoint handler (`/snap`, `/log`), filename sanitisation, absolute-path resolution, optional `onSnap`/`onLog` hooks |
-| `src/index.js` | Re-exports — nothing else |
-| [`RECIPES.md`](RECIPES.md) | Map of opt-in patterns (agent-map, snapdiff, namespace) parked on `agent-modes` |
-
-## Bugs we have already paid for
-
-These cost time during development. Future contributors should not pay
-the same toll.
-
-### 1. ASI bites: `[…].forEach(…)` after a statement
-
-Original code:
-
-```js
-window.addEventListener('unhandledrejection', e => showErr(...))
-
-['log','warn','error'].forEach(…)
+```text
+CLI (optional) ─┐
+                ├─> trigger URL / window.snapeye
+agent browser ──┘
+        -> in-page runtime
+        -> ArtifactStore interface
+        -> same-origin HTTP transport
+        -> Vite middleware
+        -> filesystem store
+        -> .snapeye/
 ```
 
-Without a semicolon, JavaScript parses this as
-`addEventListener(...)['log','warn','error'].forEach(...)` — a member
-access on `undefined`. The whole script bombs at line 217, the snap
-loop never starts, and you debug for an hour. Always prefix array
-literals at statement position with `;`.
+The CLI is a client of the same URL protocol an agent would drive by hand: it
+checks health, mints a run id, opens one URL, and polls for the terminal result.
+It must never grow navigation, interaction, or judgement.
 
-### 2. `process.cwd()` can surprise relative output dirs
+Capture, diff, and record must depend on the `ArtifactStore` contract, not on
+Vite or Node paths. The Vite plugin is the only V1 host adapter.
 
-`createSnapEyeHandler({ dir: '.snapeye' })` resolves against
-`process.cwd()`. If a consumer runs a dev server from a different
-directory than expected and passes a deep relative path, the output dir
-can land somewhere surprising. Prefer absolute paths when integrating
-inside custom servers:
+The contract is:
 
-```js
-const HERE = resolve(new URL('.', import.meta.url).pathname)
-const snapEye = createSnapEyeHandler({ dir: resolve(HERE, '.snapeye') })
+```ts
+interface ArtifactStore {
+  readBaseline(name: string): Promise<StoredBaseline | null>
+  writeBaseline(name: string, baseline: StoredBaseline): Promise<void>
+  writeRunArtifact(
+    runId: string,
+    filename: string,
+    data: Blob | Uint8Array | string
+  ): Promise<void>
+  commitResult(runId: string, result: SnapEyeResult): Promise<void>
+}
 ```
 
-The handler itself respects absolute dirs — `resolve(cwd, abs)`
-returns `abs` unchanged.
+`commitResult()` is single-assignment, atomic, and always the final write. A
+visible `result.json` means a run is terminal.
 
-### 3. Browser tabs can stack `?snap=all` runs
+## Non-negotiable invariants
 
-When `open URL` is called from a script while another tab on the same
-URL is already open, browsers may load a fresh tab without closing the
-old one. Two tabs both ticking through the loop means two writes per
-file and double the time. The driving script should close existing
-tabs first (e.g. via `osascript`) or use a unique port per session.
+- A URL-triggered operation requires a caller-supplied, validated `runId`.
+- Results exist only at `.snapeye/runs/<runId>/result.json`.
+- Invalid IDs are rejected, never sanitized into a different path.
+- All filesystem operations remain inside the configured root and reject
+  symlink escapes.
+- Baselines are committable and pruning never touches them.
+- Diff regions use CSS pixels in the target's axis-aligned capture viewport;
+  `image.scale` maps that viewport to raster pixels.
+- `changedRatio` is a number from 0 to 1.
+- Recording uses one shared frame sequence for media, filmstrip, timestamps,
+  and metrics.
+- GIF/video adapters never recapture the live target.
+- Errors are terminal when a valid run namespace exists and never publish stack
+  traces.
+- The Vite client token is ephemeral and never appears in health or public
+  runtime options.
+- The plugin uses `apply: 'serve'` and leaves production builds untouched.
+- Injection is universal and belongs to SnapEye, not to an adapter and never to
+  the agent. `transformIndexHtml` only covers HTML Vite itself serves, so the
+  plugin rewrites any HTML the dev server sends. Do not answer a new host with a
+  new adapter; make the injector handle it. Two things it must keep handling,
+  both found on a real Astro site: chunks arrive as `Uint8Array` (a web
+  ReadableStream, not `Buffer`), and the content type is declared through
+  `writeHead()`, which `getHeader()` never reports.
+- The failure mode is silent and expensive — health says `ok`, `window.snapeye`
+  does not exist, and every operation burns its full timeout. Any change to
+  injection must be verified against a framework-rendered page, not the fixture:
+  `curl -s -H 'Accept: text/html' localhost:PORT | grep -c data-snapeye-client`.
+- Every capture waits for the page to go quiet before shooting. The first
+  request to a cold dev server renders differently from every warm one; on a
+  real Astro site that alone produced 9 false positives out of 12.
+- The automatically injected client has no in-page side effects unless the
+  developer opts in through `snapeye({ client })`: no console patching, no
+  overlay, no hotkey. Anything that writes a baseline must be deliberate, and a
+  keystroke aimed at an editable element is never one.
+- Plugin options are validated: unknown or malformed keys throw rather than
+  being silently dropped.
+- `capture` and `diff` pin motion before capturing; `record` never does. The
+  stylesheet goes in before the rewind, because a Web Animations pause alone
+  does not hold — the CSS `animation-play-state` property re-takes control on
+  the next style resolution and the animation slips a frame. This was measured,
+  not assumed: 7 false positives in 8 runs before, 0 in 12 after.
+- A false "changed" is the worst defect this package can ship. Anything that
+  makes an unchanged page report a change is a release blocker.
 
-## Roadmap
+## Public API compatibility
 
-Rough order of value, kept here so a contributing agent can pick the
-right next thing:
+Keep `attachSnapEye()` useful, retain `window.snapeye.snap()` as an alias of
+`capture()`, and preserve console forwarding where it does not weaken V1.
+`createSnapEyeHandler()` remains a legacy flat-output adapter; do not route new
+V1 behavior through its insecure contract.
 
-1. **Done — `@zumer/snapeye@0.1.0` on npm** (peerDep `@zumer/snapdom@^2.12`).
-2. **`zumerlab/snapeye-action`.** GitHub Action that spins up
-   `npm run dev`, drives Playwright across a list of routes, lets
-   SnapEye capture each, uploads PNGs as a PR comment. This is where
-   the loop pays off in CI, not just local dev.
-3. **Headless CLI.** `npx snapeye capture URL --routes a,b,c`. Wraps
-   Playwright; output goes through the same HTTP contract so `onSnap`
-   hooks keep working.
-4. **Promote `agent-modes` to companion packages** once one of the
-   three recipes (agent-map / snapdiff / namespace) has a real user
-   pulling on it.
-5. **Hand-rolled `.d.ts`.** Surface is small enough.
+The old `.snapeye/<name>.png` layout is not a V1 compatibility constraint.
 
-Each is a separate repo / release. **Keep `/src/` unchanged when
-adding any of them.**
+## SnapDOM
 
-## License
+Use the current published SnapDOM release and keep the peer minimum aligned
+with the API SnapEye actually exercises. Do not modify SnapDOM core. SnapDiff
+owns pixel comparison. The local GIF/video adapters consume frames already
+captured with SnapDOM because the current upstream exporters recapture the live
+element and do not accept a shared frame sequence.
 
-MIT · Juan Martín Muda · Zumerlab. Source:
-`github.com/zumerlab/snapeye`.
+## Before handing off a change
+
+Run:
+
+```sh
+npm test          # skips the browser suite loudly when no Chrome is present
+npm run test:browser  # same suite, but a missing browser is a failure
+npm run test:types
+npm run build
+```
+
+Also verify the Vite fixture in a real browser when runtime, injection, capture,
+diff, record, or transport behavior changes. Read `result.json` before images.
+
+## Before a release: install the package, do not trust the repo
+
+Two bugs have already reached this point invisible to the whole suite, because
+inside the repo every dependency resolves differently than it does in a real
+project: a default import of `gifenc` that only fails once a bundler picks its
+CommonJS build, and client dependencies that Vite's scanner never discovers and
+therefore serves unbundled. Both killed the in-page client completely, and both
+looked green here.
+
+So before publishing, install the packed tarball into a throwaway app and run
+the real flow:
+
+```sh
+npm pack --pack-destination /tmp/fresh
+cd /tmp/fresh && npm install ./zumer-snapeye-*.tgz @zumer/snapdom vite
+# vite.config.js with plugins: [snapeye()], one index.html with a target
+npx vite &
+npx snapeye capture panel --target '#card'
+npx snapeye diff panel --target '#card' --fail-on-change
+npx snapeye record panel --target '#card' --duration 800 --fps 5
+```
+
+Watch the browser console: any page error means the injected client never
+attached, and every operation will time out with exit code 2.

@@ -1,17 +1,41 @@
 {
   "name": "@zumer/snapeye",
-  "version": "0.1.0",
-  "description": "A tiny bridge that lets a coding agent see your running web app. snapDOM client + a two-endpoint HTTP handler — that's it.",
+  "version": "0.2.0",
+  "description": "Capture, compare, and record deterministic visual artifacts for coding agents.",
   "type": "module",
   "main": "./src/index.js",
+  "types": "./types/index.d.ts",
   "exports": {
-    ".":         "./src/index.js",
-    "./client":  "./src/client.js",
-    "./server":  "./src/server.js"
+    ".": {
+      "browser": {
+        "types": "./types/client.d.ts",
+        "import": "./src/client.js"
+      },
+      "types": "./types/index.d.ts",
+      "import": "./src/index.js"
+    },
+    "./client": {
+      "types": "./types/client.d.ts",
+      "import": "./src/client.js"
+    },
+    "./server": {
+      "types": "./types/server.d.ts",
+      "import": "./src/server.js"
+    },
+    "./vite": {
+      "types": "./types/vite.d.ts",
+      "import": "./src/vite.js"
+    }
+  },
+  "bin": {
+    "snapeye": "./src/cli.js"
   },
   "files": [
     "src/",
+    "types/",
     "README.md",
+    "AGENT.md",
+    "RECIPES.md",
     "LICENSE"
   ],
   "keywords": [
@@ -20,6 +44,9 @@
     "ai",
     "visual",
     "screenshot",
+    "visual-regression",
+    "vite",
+    "recording",
     "claude",
     "cursor",
     "aider",
@@ -29,10 +56,14 @@
   "author": "Juan Martin Muda - Zumerlab",
   "license": "MIT",
   "scripts": {
+    "test": "vitest run",
+    "test:browser": "SNAPEYE_REQUIRE_BROWSER=1 vitest run",
+    "test:watch": "vitest",
+    "test:types": "tsc -p test/types/tsconfig.json --noEmit",
     "bump:dry": "npx @zumerbox/bump -d",
-    "bump":     "npx @zumerbox/bump && npx @zumerbox/changelog",
-    "prebuild": "git add CHANGELOG.md && git commit -m \"Bumped version\" && git push --follow-tags",
-    "build":    "npm pack"
+    "bump": "npx @zumerbox/bump && npx @zumerbox/changelog",
+    "build": "npm pack --dry-run",
+    "prepublishOnly": "npm run test:browser && npm run test:types && npm run build"
   },
   "homepage": "https://github.com/zumerlab/snapeye#readme",
   "repository": {
@@ -46,12 +77,21 @@
     "node": ">=18"
   },
   "peerDependencies": {
-    "@zumer/snapdom": "^2.12.0"
-  },
-  "peerDependenciesMeta": {
-    "@zumer/snapdom": { "optional": false }
+    "@zumer/snapdom": "^2.24.10"
   },
   "publishConfig": {
     "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "@zumer/snapdom": "^2.24.10",
+    "playwright-core": "^1.62.1",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.3",
+    "vitest": "^3.2.7"
+  },
+  "dependencies": {
+    "@zumer/snapdiff": "^0.2.2",
+    "gifenc": "^1.0.3"
   }
 }
