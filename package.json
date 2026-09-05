@@ -63,8 +63,7 @@
     "bump:dry": "npx @zumerbox/bump -d",
     "bump": "npx @zumerbox/bump && npx @zumerbox/changelog",
     "build": "npm pack --dry-run",
-    "test:pack": "node scripts/check-pack.mjs",
-    "prepublishOnly": "npm run test:browser && npm run test:types && npm run build"
+    "test:pack": "node scripts/check-pack.mjs"
   },
   "homepage": "https://github.com/zumerlab/snapeye#readme",
   "repository": {
