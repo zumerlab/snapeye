@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+#### [v0.3.1](https://github.com/zumerlab/snapeye/compare/v0.3.0...v0.3.1)
+
+> 5 September 2026
+
+- Fix capture stability, diff regions, and CLI reliability [`75fdc6b`](https://github.com/zumerlab/snapeye/commit/75fdc6b9264196c4a551e923cbba19ef97348444)
+
 #### 0.3.0
 
 - feat: capture, diff and record for coding agents [`2c12426`](https://github.com/zumerlab/snapeye/commit/2c12426e32bd961ffc0a055085035911159499f3)
