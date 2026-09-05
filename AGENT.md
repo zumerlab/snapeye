@@ -105,8 +105,11 @@ The old `.snapeye/<name>.png` layout is not a V1 compatibility constraint.
 
 ## SnapDOM
 
-Use the current published SnapDOM release and keep the peer minimum aligned
-with the API SnapEye actually exercises. Do not modify SnapDOM core. SnapDiff
+Keep the development dependency on the current published SnapDOM release and
+the peer range compatible with v2 and v3 prereleases. The browser suite accepts
+`SNAPDOM_TEST_PATH` for an explicit compiled v3 build and `SNAPDOM_EXPECTED_MAJOR=3`
+to assert that it really loaded it. `SNAPDOM_PLUGINS_TEST_PATH` enables the opt-in
+redaction composition regression with the matching v3 plugins. Do not modify SnapDOM core. SnapDiff
 owns pixel comparison. The local GIF/video adapters consume frames already
 captured with SnapDOM because the current upstream exporters recapture the live
 element and do not accept a shared frame sequence.
@@ -120,6 +123,7 @@ npm test          # skips the browser suite loudly when no Chrome is present
 npm run test:browser  # same suite, but a missing browser is a failure
 npm run test:types
 npm run build
+npm run test:pack # packed consumer; optional SNAPDOM_PACKAGE_PATH selects a local core tarball
 ```
 
 Also verify the Vite fixture in a real browser when runtime, injection, capture,

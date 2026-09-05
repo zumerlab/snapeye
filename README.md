@@ -19,8 +19,19 @@ SnapEye does not navigate, click, reason, call a model, or orchestrate an agent.
 npm install --save-dev @zumer/snapeye @zumer/snapdom@latest
 ```
 
-SnapEye tracks the current SnapDOM release. This version requires
-`@zumer/snapdom@^2.24.10`.
+SnapEye supports SnapDOM `^2.24.10 || ^3.0.0-0`, including v3 prereleases.
+The development dependency stays on the published v2 release. To verify a local
+compiled v3 build without replacing it:
+
+```sh
+SNAPDOM_TEST_PATH=../snapdom-v3/dist/snapdom.mjs SNAPDOM_EXPECTED_MAJOR=3 npm run test:browser
+```
+
+Capture and diff invalidate SnapDOM's style caches by default so CSSOM-only
+changes are captured. Set `snapdomOptions.invalidate: false` only to deliberately
+test memoization. SnapEye ignores reusable `snapdomOptions.canvas` targets so
+recording frames retain independent pixels. Recheck existing v2 baselines when
+upgrading the renderer; approve replacements only after inspecting the changes.
 
 ### Any Vite app
 
@@ -469,6 +480,41 @@ attachSnapEye({ snapdom, store })
 
 The Vite plugin supplies its ephemeral token automatically; application code
 must not need or expose it.
+
+### Opt-in redaction with SnapDOM v3
+
+SnapEye does not add automatic redaction. With v3 and its matching official
+plugins installed, pass the same policy to capture, diff, and record through the
+JavaScript API:
+
+```js
+import { redactInputs } from '@zumer/snapdom-plugins/redact-inputs'
+
+const privateCapture = {
+  snapdomOptions: {
+    plugins: [redactInputs({
+      blocks: '.private-panel',
+      attributes: [{ selector: '[data-token]', names: ['data-token', 'title'] }]
+    })]
+  }
+}
+await window.snapeye.capture('panel', '#panel', privateCapture)
+await window.snapeye.diff('panel', '#panel', privateCapture)
+await window.snapeye.record('panel', '#panel', { ...privateCapture, duration: 800, fps: 5 })
+```
+
+`blocks` hides visible subtrees and keeps their space by default. Attribute rules
+remove the named metadata; copies already painted as text, CSS content, or
+bitmaps require blocking that content. Use the same policy for the baseline and
+later comparisons. These plugin objects belong in browser JavaScript, not the
+Vite plugin's JSON client configuration or CLI flags.
+
+Run the optional composition regression against the matching local plugins:
+
+```sh
+SNAPDOM_TEST_PATH=../snapdom-v3/dist/snapdom.mjs SNAPDOM_EXPECTED_MAJOR=3 \
+SNAPDOM_PLUGINS_TEST_PATH=../snapdom-v3/packages/plugins npm run test:browser
+```
 
 ## Result contract
 

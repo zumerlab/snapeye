@@ -63,7 +63,7 @@
     "bump:dry": "npx @zumerbox/bump -d",
     "bump": "npx @zumerbox/bump && npx @zumerbox/changelog",
     "build": "npm pack --dry-run",
-    "prebuild": "git add CHANGELOG.md && git commit -m \"Bumped version\" && git push --follow-tags",
+    "test:pack": "node scripts/check-pack.mjs",
     "prepublishOnly": "npm run test:browser && npm run test:types && npm run build"
   },
   "homepage": "https://github.com/zumerlab/snapeye#readme",
@@ -78,21 +78,21 @@
     "node": ">=18"
   },
   "peerDependencies": {
-    "@zumer/snapdom": "^2.24.10"
+    "@zumer/snapdom": "^2.24.10 || ^3.0.0-0"
   },
   "publishConfig": {
     "access": "public"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
-    "@zumer/snapdom": "^2.24.10",
+    "@zumer/snapdom": "^2.24.15",
     "playwright-core": "^1.62.1",
     "typescript": "^5.9.3",
     "vite": "^6.4.3",
     "vitest": "^3.2.7"
   },
   "dependencies": {
-    "@zumer/snapdiff": "^0.2.2",
+    "@zumer/snapdiff": "^0.3.1",
     "gifenc": "^1.0.3"
   }
 }

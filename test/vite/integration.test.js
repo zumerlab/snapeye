@@ -15,7 +15,7 @@ import {
 } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { snapeye } from '../../src/vite.js'
 
@@ -25,10 +25,12 @@ const { version: VERSION } = createRequire(import.meta.url)('../../package.json'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixtureRoot = join(here, '..', 'fixtures', 'vite-app')
+const snapdomTestPath = process.env.SNAPDOM_TEST_PATH && resolve(process.env.SNAPDOM_TEST_PATH)
+const pluginsTestPath = process.env.SNAPDOM_PLUGINS_TEST_PATH && resolve(process.env.SNAPDOM_PLUGINS_TEST_PATH)
 const chromePath = findChrome()
 // A silent skip makes a green run look like it exercised the browser when it
 // never did. Locally it is a loud warning; under CI or `npm run test:browser`
-// (which `prepublishOnly` uses) a missing browser fails the suite instead.
+// a missing browser fails the suite instead.
 const browserRequired = process.env.SNAPEYE_REQUIRE_BROWSER === '1' || process.env.CI === 'true'
 
 if (!chromePath) {
@@ -124,6 +126,111 @@ describe.skipIf(!chromePath).sequential('Vite integration', () => {
     const metadata = JSON.parse(await readFile(join(artifactRoot, 'baselines', 'dashboard.json'), 'utf8'))
     expect(metadata).toMatchObject({ schemaVersion: 1, name: 'dashboard' })
   }, 30_000)
+
+  it('loads the explicitly requested SnapDOM build', async () => {
+    if (!process.env.SNAPDOM_EXPECTED_MAJOR) return
+    await page.goto(baseUrl, { waitUntil: 'load' })
+    await page.waitForFunction(() => !!window.__snapeyeSnapdom)
+    expect(await page.evaluate(() => Number.parseInt(window.__snapeyeSnapdom.version ?? '2', 10)))
+      .toBe(Number(process.env.SNAPDOM_EXPECTED_MAJOR))
+  })
+
+  it('sees CSSOM-only changes on the same live target', async () => {
+    await page.goto(baseUrl, { waitUntil: 'load' })
+    await page.waitForFunction(() => !!window.snapeye)
+    const result = await page.evaluate(async () => {
+      const target = document.createElement('div')
+      target.id = 'cssom-target'
+      target.style.cssText = 'width:80px;height:40px'
+      const style = document.createElement('style')
+      style.textContent = '#cssom-target { background: rgb(200, 20, 30) }'
+      document.head.append(style)
+      document.body.append(target)
+      const options = { settle: false, stabilize: false }
+      const baseline = await window.snapeye.capture('cssom', target, { ...options, runId: 'cssom_base' })
+      const unchanged = await window.snapeye.diff('cssom', target, { ...options, runId: 'cssom_same' })
+      style.sheet.insertRule('#cssom-target { background: rgb(20, 30, 200) }', 1)
+      const changed = await window.snapeye.diff('cssom', target, { ...options, runId: 'cssom_changed' })
+      return { baseline, unchanged, changed }
+    })
+    expect(result.baseline.status).toBe('ok')
+    expect(result.unchanged).toMatchObject({ status: 'ok', diff: { changed: false } })
+    expect(result.changed).toMatchObject({ status: 'ok', diff: { changed: true } })
+  }, 30_000)
+
+  it.skipIf(!pluginsTestPath)('composes opt-in v3 block and attribute redaction across capture, diff and recording', async () => {
+    await page.goto(baseUrl, { waitUntil: 'load' })
+    await page.waitForFunction(() => !!window.snapeye)
+    const result = await page.evaluate(async pluginUrl => {
+      // Vitest transforms imports in this Node test before Playwright serializes
+      // the callback. Keep this import native to the browser module loader.
+      const { redactInputs } = await new Function('url', 'return import(url)')(pluginUrl)
+      const target = document.createElement('div')
+      target.id = 'private-target'
+      target.style.cssText = 'position:relative;width:120px;height:80px;background:white'
+      target.innerHTML = '<div class="private-block" style="width:20px;height:20px;background:red">SECRET_BLOCK</div>' +
+        '<input class="private-value" value="SECRET_VALUE" style="width:90px;height:20px">' +
+        '<span data-token="SECRET_TOKEN" title="SECRET_TITLE"></span>' +
+        '<div class="public-block" style="width:20px;height:20px;background:blue"></div>'
+      document.body.append(target)
+      const cloneStrings = []
+      const redactor = redactInputs({
+        blocks: '.private-block',
+        attributes: [
+          { selector: '.private-value', names: ['value'] },
+          { selector: '[data-token]', names: ['data-token', 'title'] }
+        ]
+      })
+      const options = {
+        settle: false, stabilize: false,
+        snapdomOptions: { plugins: [redactor, {
+          name: 'observe-redacted-clone',
+          afterClone(ctx) { cloneStrings.push(ctx.clone.outerHTML) }
+        }] }
+      }
+      const baseline = await window.snapeye.capture('private', target, { ...options, runId: 'private_base' })
+      target.querySelector('.private-block').style.background = 'green'
+      target.querySelector('.private-block').textContent = 'SECRET_CHANGED'
+      target.querySelector('input').value = 'SECRET_CHANGED'
+      target.querySelector('[data-token]').setAttribute('data-token', 'SECRET_CHANGED')
+      const hiddenChange = await window.snapeye.diff('private', target, { ...options, runId: 'private_same' })
+      target.querySelector('.public-block').style.background = 'orange'
+      const publicChange = await window.snapeye.diff('private', target, { ...options, runId: 'private_changed' })
+      const record = await window.snapeye.record('private', target, {
+        ...options, runId: 'private_record', duration: 600, fps: 5
+      })
+      return {
+        baseline, hiddenChange, publicChange, record, cloneStrings,
+        liveValue: target.querySelector('input').value,
+        liveToken: target.querySelector('[data-token]').getAttribute('data-token')
+      }
+    }, `/@fs/${join(pluginsTestPath, 'redact-inputs.js')}`)
+    expect(result.baseline.status).toBe('ok')
+    expect(result.hiddenChange).toMatchObject({ status: 'ok', diff: { changed: false, changedRatio: 0 } })
+    expect(result.publicChange).toMatchObject({ status: 'ok', diff: { changed: true } })
+    expect(result.record.status).toBe('ok')
+    expect(result.record.record.frameCount).toBeGreaterThan(1)
+    expect(result.cloneStrings.length).toBe(3 + result.record.record.frameCount)
+    for (const clone of result.cloneStrings) {
+      expect(clone).not.toContain('SECRET_')
+      expect(clone).not.toContain('data-token=')
+      expect(clone).not.toContain('title=')
+    }
+    expect(result.liveValue).toBe('SECRET_CHANGED')
+    expect(result.liveToken).toBe('SECRET_CHANGED')
+    const png = await readFile(join(artifactRoot, 'baselines', 'private.png'))
+    const pixel = await page.evaluate(async data => {
+      const image = new Image()
+      image.src = data
+      await image.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = image.width; canvas.height = image.height
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(image, 0, 0)
+      return [...ctx.getImageData(5, 5, 1, 1).data]
+    }, `data:image/png;base64,${png.toString('base64')}`)
+    expect(pixel).toEqual([255, 255, 255, 255])
+  }, 40_000)
 
   it('waits for a hydrated target before resolving and capturing it', async () => {
     await page.goto(baseUrl, { waitUntil: 'load' })
@@ -567,8 +674,12 @@ async function startServer (artifactRoot) {
   const vite = await createServer({
     root: fixtureRoot,
     logLevel: 'silent',
+    resolve: { alias: snapdomTestPath ? [{ find: /^@zumer\/snapdom(?:\/plugins)?$/, replacement: snapdomTestPath }] : [] },
     plugins: [snapeye({ root: artifactRoot, maxRuns: 3 })],
-    server: { host: '127.0.0.1', port: 0, strictPort: false }
+    server: {
+      host: '127.0.0.1', port: 0, strictPort: false,
+      fs: { allow: [join(here, '../..'), ...[snapdomTestPath && dirname(snapdomTestPath), pluginsTestPath].filter(Boolean)] }
+    }
   })
   await vite.listen()
   return vite

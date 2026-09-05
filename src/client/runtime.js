@@ -53,7 +53,7 @@ const DEFAULTS = {
   /** Ceiling for a selector `waitFor`. */
   waitTimeout: 5000,
   snapdomOptions: {
-    type: 'png',
+    format: 'png',
     dpr: 1,
     scale: 1,
     embedFonts: false
@@ -378,12 +378,12 @@ export function attachSnapEye (userOptions = {}) {
       outerShadows: false,
       // CSS animations and canvas draws do not necessarily produce DOM
       // mutations, so SnapDOM's burst cache is unsafe for a frame sequence.
-      burst: false
+      burst: false,
+      width: undefined,
+      height: undefined
     }
     // Arbitrary export dimensions bypass the frame-memory budget. Recording
     // owns its raster scale; callers can use the bounded top-level `scale`.
-    delete recordSnapdomOptions.width
-    delete recordSnapdomOptions.height
     const frames = []
     const timestampsMs = []
     let firstImage = null
@@ -493,11 +493,19 @@ export function attachSnapEye (userOptions = {}) {
   async function captureTarget (element, operationOptions, includeBlob) {
     const fallbackCss = readCssSize(element)
     const captureOptions = { ...options.snapdomOptions, ...operationOptions.snapdomOptions }
+    if (captureOptions.width == null) delete captureOptions.width
+    if (captureOptions.height == null) delete captureOptions.height
+    // CSSOM edits are invisible to DOM mutation observers. A visual comparison
+    // must include them even when v3 can otherwise reuse a previous capture.
+    captureOptions.invalidate ??= true
+    // Every recording frame owns its pixels; an inherited reusable output canvas
+    // would otherwise turn the entire sequence into copies of the last frame.
+    captureOptions.canvas = null
     if (operationOptions.scale != null) captureOptions.scale = Number(operationOptions.scale)
     let canvas
     try {
       const result = await options.snapdom(element, captureOptions)
-      if (typeof result?.toCanvas === 'function') canvas = await result.toCanvas()
+      if (typeof result?.toCanvas === 'function') canvas = await result.toCanvas({ canvas: null })
       else if (typeof options.snapdom.toCanvas === 'function') canvas = await options.snapdom.toCanvas(element, captureOptions)
       // SnapDOM rasterizes its serialized viewBox, which can be larger than
       // the element's logical box when root transforms or bleed are present.

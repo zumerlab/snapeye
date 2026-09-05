@@ -31,3 +31,5 @@ if (params.get('__snapeye') === 'record') {
 }
 
 window.__snapeyeFixtureReady = true
+import { snapdom } from '@zumer/snapdom'
+window.__snapeyeSnapdom = snapdom

@@ -6,6 +6,46 @@ import { generateRunId, isValidRunId } from '../../src/core/ids.js'
 const FIXED_DATE = Date.UTC(2026, 0, 2, 3, 4, 5)
 
 describe('in-page SnapEye runtime', () => {
+  it('refreshes CSSOM captures by default while allowing a deliberate memoization override', async () => {
+    const harness = createRuntime()
+    await harness.api.capture('fresh', { runId: 'fresh_cssom' })
+    await harness.api.capture('memo', { runId: 'memo_opt_in', snapdomOptions: { invalidate: false } })
+    expect(harness.snapdom.mock.calls[0][1].invalidate).toBe(true)
+    expect(harness.snapdom.mock.calls[1][1].invalidate).toBe(false)
+  })
+
+  it('keeps recording canvases independent and drops inherited absolute dimensions', async () => {
+    let now = 0
+    const reusable = createCanvas()
+    const exported = []
+    const snapdom = vi.fn(async (_element, options) => ({
+      meta: { w0: 20, h0: 10 },
+      toCanvas: async overrides => {
+        const canvas = overrides.canvas ?? options.canvas ?? createCanvas()
+        exported.push(canvas)
+        return canvas
+      }
+    }))
+    const harness = createRuntime({
+      snapdom,
+      snapdomOptions: { canvas: reusable, width: 100000, height: 100000 },
+      now: () => now,
+      wait: async milliseconds => { now += milliseconds },
+      encodeGif: vi.fn(async () => new Blob(['gif'], { type: 'image/gif' }))
+    })
+    const result = await harness.api.record('frames', harness.element, {
+      runId: 'independent_frames', duration: 500, fps: 5
+    })
+    expect(result.status).toBe('ok')
+    expect(exported.length).toBeGreaterThan(1)
+    expect(new Set(exported).size).toBe(exported.length)
+    expect(exported).not.toContain(reusable)
+    for (const [, options] of snapdom.mock.calls) {
+      expect(options).not.toHaveProperty('width')
+      expect(options).not.toHaveProperty('height')
+    }
+  })
+
   it('waits for hydration before resolving a target that does not exist yet', async () => {
     let ready = false
     const harness = createRuntime({
