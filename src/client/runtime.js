@@ -178,12 +178,6 @@ export function attachSnapEye (userOptions = {}) {
 
     let resolved
     try {
-      resolved = resolveTarget(targetInput, operationOptions)
-    } catch (error) {
-      return commitError({ runId, operation, name: safeName, startedAt, error })
-    }
-
-    try {
       const payload = await withHiddenElements(async () => {
         await dependencies.waitForReady(operationOptions.waitFor ?? options.waitFor, {
           document: documentImpl,
@@ -191,6 +185,9 @@ export function attachSnapEye (userOptions = {}) {
           now: clock.now,
           timeoutMs: operationOptions.waitTimeout ?? options.waitTimeout
         })
+        // Hydration can create or replace the target while readiness is being
+        // awaited. Resolve it afterwards so we capture the live element.
+        resolved = resolveTarget(targetInput, operationOptions)
         if ((operationOptions.settle ?? options.settle) !== false) {
           await dependencies.waitForSettled({
             document: documentImpl,
@@ -232,7 +229,7 @@ export function attachSnapEye (userOptions = {}) {
       }
       return result
     } catch (error) {
-      return commitError({ runId, operation, name: safeName, target: resolved.meta, startedAt, error })
+      return commitError({ runId, operation, name: safeName, target: resolved?.meta, startedAt, error })
     }
   }
 
@@ -313,16 +310,31 @@ export function attachSnapEye (userOptions = {}) {
     }
 
     const diffBlob = await canvasToPng(comparison.canvas)
-    const diffPixels = comparison.canvas.getContext('2d').getImageData(
-      0,
-      0,
-      comparison.width,
-      comparison.height
-    ).data
+    // SnapDiff's unchanged-pixel wash can match a custom diffColor. Its pixel
+    // count is authoritative, and an unchanged capture needs no readback or
+    // image-sized region mask.
+    const changed = comparison.diff > 0
+    let regionCanvas = comparison.canvas
+    if (changed && needsRegionMask(diffOptions)) {
+      // A grey diffColor can equal the unchanged-pixel wash, and matching
+      // aaColor includes pixels SnapDiff deliberately excluded. Its mask
+      // output omits both while the original canvas remains the artifact.
+      try {
+        regionCanvas = dependencies.diffCanvas(baselineCanvas, captured.canvas, {
+          ...diffOptions,
+          diffMask: true
+        }).canvas
+      } catch {
+        throw new SnapEyeError(ERROR_CODES.DIFF_FAILED, 'SnapEye could not compare the current capture')
+      }
+    }
+    const diffPixels = changed
+      ? regionCanvas.getContext('2d').getImageData(0, 0, comparison.width, comparison.height).data
+      : null
     const regions = extractRegions(
-      maskFromDiffBuffer(diffPixels, diffOptions.diffColor),
-      comparison.width,
-      comparison.height,
+      changed ? maskFromDiffBuffer(diffPixels, diffOptions.diffColor) : new Uint8Array(0),
+      changed ? comparison.width : 0,
+      changed ? comparison.height : 0,
       { scale: captured.image.scale, ...operationOptions.regionOptions }
     )
     await persistRunArtifacts(runId, [
@@ -333,7 +345,7 @@ export function attachSnapEye (userOptions = {}) {
     return {
       image: captured.image,
       diff: {
-        changed: comparison.diff > 0,
+        changed,
         changedRatio: computeChangedRatio(comparison.diff, comparison.total),
         ...regions
       },
@@ -810,6 +822,14 @@ function normalizeRecordFormat (value) {
   const format = value || 'gif'
   if (format === 'gif' || format === 'video' || format === 'both') return format
   throw new SnapEyeError(ERROR_CODES.RECORD_FAILED, 'Record format must be "gif", "video", or "both"')
+}
+
+function needsRegionMask (options) {
+  if (options.diffMask) return false
+  const [r, g, b] = options.diffColor ?? [255, 0, 0]
+  if (r === g && g === b) return true
+  const aaColor = options.aaColor ?? [255, 255, 0]
+  return !options.includeAA && r === aaColor[0] && g === aaColor[1] && b === aaColor[2]
 }
 
 function roundTimestamp (value) {

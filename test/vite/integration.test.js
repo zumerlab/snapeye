@@ -125,6 +125,28 @@ describe.skipIf(!chromePath).sequential('Vite integration', () => {
     expect(metadata).toMatchObject({ schemaVersion: 1, name: 'dashboard' })
   }, 30_000)
 
+  it('waits for a hydrated target before resolving and capturing it', async () => {
+    await page.goto(baseUrl, { waitUntil: 'load' })
+    await page.waitForFunction(() => !!window.snapeye)
+    await page.evaluate(async () => {
+      const target = document.querySelector('#target')
+      const hydrated = target.cloneNode(true)
+      target.remove()
+      setTimeout(() => document.body.appendChild(hydrated), 50)
+      await window.snapeye.capture('hydrated', '#target', {
+        runId: 'hydrated_capture',
+        waitFor: '#target'
+      })
+    })
+
+    const result = await waitForResult('hydrated_capture')
+    expect(result).toMatchObject({
+      status: 'ok',
+      target: { selector: '#target' },
+      image: { cssWidth: 320, cssHeight: 180 }
+    })
+  }, 30_000)
+
   it('diff reads the baseline and keeps runs isolated', async () => {
     const runId = 'diff_001'
     await page.goto(`${operationUrl('diff', 'dashboard', runId)}&variant=changed`, { waitUntil: 'load' })
@@ -150,6 +172,46 @@ describe.skipIf(!chromePath).sequential('Vite integration', () => {
     await expectFile(join(artifactRoot, 'runs', runId, 'diff.png'))
     await expectFile(join(artifactRoot, 'runs', 'capture_001', 'result.json'))
     await expect(access(join(artifactRoot, 'result.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+  }, 30_000)
+
+  it('extracts only real changes when the diff colour matches the grey pixel wash', async () => {
+    await page.goto(baseUrl, { waitUntil: 'load' })
+    await page.waitForFunction(() => !!window.snapeye)
+    await page.evaluate(async () => {
+      const target = document.createElement('canvas')
+      target.id = 'grey-colour-target'
+      target.width = 80
+      target.height = 60
+      document.body.appendChild(target)
+      const context = target.getContext('2d')
+      context.fillStyle = 'black'
+      context.fillRect(0, 0, 80, 60)
+      await window.snapeye.capture('grey-colour', target, { runId: 'grey_capture' })
+      const diffOptions = {
+        diffOptions: { diffColor: [230, 230, 230] },
+        regionOptions: { tileSize: 1, gapTiles: 1, minRegionCssSide: 0, minRegionCssArea: 0 }
+      }
+      await window.snapeye.diff('grey-colour', target, { ...diffOptions, runId: 'grey_unchanged' })
+      context.fillStyle = 'white'
+      context.fillRect(3, 4, 2, 2)
+      await window.snapeye.diff('grey-colour', target, { ...diffOptions, runId: 'grey_changed' })
+    })
+
+    expect((await waitForResult('grey_capture')).status).toBe('ok')
+    expect(await waitForResult('grey_unchanged')).toMatchObject({
+      status: 'ok',
+      diff: { changed: false, changedRatio: 0, regionCount: 0, regions: [] }
+    })
+    const changed = await waitForResult('grey_changed')
+    expect(changed).toMatchObject({
+      status: 'ok',
+      diff: {
+        changed: true,
+        regionCount: 1,
+        regions: [{ x: 3, y: 4, width: 2, height: 2, aggregate: false }]
+      }
+    })
+    expect(changed.diff.changedRatio).toBeCloseTo(4 / (80 * 60), 6)
   }, 30_000)
 
   it('publishes BASELINE_NOT_FOUND instead of inventing a comparison', async () => {
@@ -296,6 +358,22 @@ describe.skipIf(!chromePath).sequential('Vite integration', () => {
 
     await page.goto(baseUrlWithMotion(operationUrl('capture', 'animated', 'anim_base')), { waitUntil: 'load' })
     expect((await waitForResult('anim_base')).status).toBe('ok')
+
+    const restoredMotion = await page.evaluate(async () => {
+      const animations = document.getAnimations()
+      const times = animations.map(animation => Number(animation.currentTime))
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      return {
+        states: animations.map(animation => animation.playState),
+        advanced: animations.map((animation, index) => Number(animation.currentTime) > times[index]),
+        frozen: !!document.querySelector('[data-snapeye-freeze]')
+      }
+    })
+    expect(restoredMotion).toEqual({
+      states: ['running', 'running'],
+      advanced: [true, true],
+      frozen: false
+    })
 
     const verdicts = []
     for (let attempt = 0; attempt < 4; attempt++) {

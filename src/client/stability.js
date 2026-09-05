@@ -39,33 +39,50 @@ const FREEZE_CSS = `*, *::before, *::after {
  * @returns {Promise<() => void>} restores the page to how it was found
  */
 export async function freezeMotion (documentImpl, { window: windowImpl, wait } = {}) {
+  // Applying the stylesheet changes CSS animations' reported playState to
+  // paused. Remember their live state before that change so restoration does
+  // not turn a running animation into a permanently paused one.
+  const original = new Map(listAnimations(documentImpl).map(animation => [animation, {
+    animation,
+    currentTime: readCurrentTime(animation),
+    playState: animation.playState
+  }]))
   const style = injectFreezeStyle(documentImpl)
-  // Let the paused property reach the animations before rewinding them.
-  await nextFrames(windowImpl, wait, 2)
-
   const entries = []
-  for (const animation of listAnimations(documentImpl)) {
-    const entry = {
-      animation,
-      currentTime: readCurrentTime(animation),
-      playState: animation.playState
-    }
-    try {
-      if (isEndless(animation)) {
-        // A phase is only reproducible if it is chosen, not observed.
-        animation.currentTime = 0
-        animation.pause()
-      } else {
-        animation.finish()
+  try {
+    // Let the paused property reach the animations before rewinding them.
+    await nextFrames(windowImpl, wait, 2)
+    for (const animation of listAnimations(documentImpl)) {
+      const entry = original.get(animation) || {
+        animation,
+        currentTime: readCurrentTime(animation),
+        playState: animation.playState
       }
+      // Rewinding can succeed even when pause() then throws. Such partial
+      // changes still need to be undone.
       entries.push(entry)
-    } catch {
-      // Some animations refuse both (idle, zero-duration, replaced). They are
-      // not a reason to abandon the rest of the page.
+      try {
+        if (isEndless(animation)) {
+          // A phase is only reproducible if it is chosen, not observed.
+          animation.currentTime = 0
+          animation.pause()
+        } else {
+          animation.finish()
+        }
+      } catch {
+        // Some animations refuse both (idle, zero-duration, replaced). They
+        // are not a reason to abandon the rest of the page.
+      }
     }
+  } catch (error) {
+    restoreMotion()
+    throw error
   }
 
-  return function restoreMotion () {
+  return restoreMotion
+
+  function restoreMotion () {
+    try { style?.remove() } catch {}
     for (const entry of entries.reverse()) {
       try {
         if (entry.currentTime != null) entry.animation.currentTime = entry.currentTime
@@ -73,7 +90,7 @@ export async function freezeMotion (documentImpl, { window: windowImpl, wait } =
         else if (entry.playState === 'paused') entry.animation.pause()
       } catch {}
     }
-    try { style?.remove() } catch {}
+    entries.length = 0
   }
 }
 
@@ -95,7 +112,7 @@ export async function freezeMotion (documentImpl, { window: windowImpl, wait } =
  */
 export async function waitForSettled ({ document, window: windowImpl, element, budgetMs = 2500, wait }) {
   if (!document || !(budgetMs > 0)) return
-  const now = () => (windowImpl?.performance?.now?.() ?? 0)
+  const now = () => (windowImpl?.performance?.now?.() ?? Date.now())
   const deadline = now() + budgetMs
   let previous = null
   let stable = 0
@@ -168,13 +185,36 @@ function asMilliseconds (spec) {
 async function nextFrames (windowImpl, wait, count) {
   for (let i = 0; i < count; i++) {
     if (typeof windowImpl?.requestAnimationFrame === 'function') {
-      await new Promise(resolve => windowImpl.requestAnimationFrame(() => resolve()))
+      await nextFrame(windowImpl)
     } else if (typeof wait === 'function') {
       await wait(16)
     } else {
       return
     }
   }
+}
+
+function nextFrame (windowImpl) {
+  // Background documents may never receive animation frames. A timer keeps
+  // stability waits bounded while foreground frames still resolve normally.
+  const schedule = windowImpl.setTimeout?.bind(windowImpl) || globalThis.setTimeout
+  const cancel = windowImpl.clearTimeout?.bind(windowImpl) || globalThis.clearTimeout
+  return new Promise((resolve, reject) => {
+    let frame
+    const timer = schedule(() => {
+      try { windowImpl.cancelAnimationFrame?.(frame) } catch {}
+      resolve()
+    }, 100)
+    try {
+      frame = windowImpl.requestAnimationFrame(() => {
+        cancel(timer)
+        resolve()
+      })
+    } catch (error) {
+      cancel(timer)
+      reject(error)
+    }
+  })
 }
 
 function listAnimations (documentImpl) {

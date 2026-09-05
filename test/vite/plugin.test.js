@@ -1,8 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { snapeye } from '../../src/vite.js'
 
 const CLIENT_ID = 'virtual:@zumer/snapeye/client'
 const RESOLVED_CLIENT_ID = `\0${CLIENT_ID}`
+const temporaryRoots = []
+
+afterEach(async () => {
+  await Promise.all(temporaryRoots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+})
 
 describe('snapeye() Vite plugin options', () => {
   it('only applies to the dev server and resolves its virtual client', () => {
@@ -77,6 +85,36 @@ describe('snapeye() Vite plugin options', () => {
     const config = snapeye().config({ root: '/definitely/not/a/project' })
 
     expect(config).toBeNull()
+  })
+
+  it('pre-bundles private dependencies in an isolated package installation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'snapeye-prebundle-'))
+    temporaryRoots.push(root)
+    const installed = join(root, 'packages', 'snapeye')
+    const modules = join(root, 'app', 'node_modules', '@zumer')
+    await mkdir(installed, { recursive: true })
+    await mkdir(modules, { recursive: true })
+    // Like pnpm, the app links to SnapEye while its dependencies live beside
+    // the real package. package.json is deliberately absent from its exports.
+    await writeFile(join(installed, 'package.json'), JSON.stringify({
+      name: '@zumer/snapeye', type: 'module', exports: { '.': { import: './index.js' } }
+    }))
+    await symlink(installed, join(modules, 'snapeye'), process.platform === 'win32' ? 'junction' : 'dir')
+    for (const dependency of ['@zumer/snapdom', '@zumer/snapdiff', 'gifenc']) {
+      const directory = join(root, 'packages', 'node_modules', dependency)
+      await mkdir(directory, { recursive: true })
+      await writeFile(join(directory, 'package.json'), JSON.stringify({
+        name: dependency, exports: { '.': './index.js', './diff': './index.js' }
+      }))
+      await writeFile(join(directory, 'index.js'), '')
+    }
+
+    const config = snapeye().config({ root: join(root, 'app') })
+    expect(config?.optimizeDeps.include).toEqual([
+      '@zumer/snapeye > @zumer/snapdom',
+      '@zumer/snapeye > @zumer/snapdiff/diff',
+      '@zumer/snapeye > gifenc'
+    ])
   })
 
   it('injects the client tag once per document', () => {

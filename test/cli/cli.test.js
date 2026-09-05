@@ -66,6 +66,7 @@ describe('snapeye CLI arguments', () => {
     { label: 'a flag without its value', argv: ['diff', 'ok', '--target'] },
     { label: 'a non-numeric timeout', argv: ['diff', 'ok', '--timeout', 'soon'] },
     { label: 'an unparseable url', argv: ['diff', 'ok', '--url', 'not a url'] },
+    { label: 'a non-HTTP url', argv: ['diff', 'ok', '--url', 'file:///tmp/index.html'] },
     { label: 'a stray argument', argv: ['diff', 'ok', 'extra'] }
   ])('refuses $label', ({ argv }) => {
     expect(() => parseArgs(argv)).toThrow()

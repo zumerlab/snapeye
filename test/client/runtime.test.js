@@ -1,10 +1,58 @@
 import { describe, expect, it, vi } from 'vitest'
+import { diffPixels } from '@zumer/snapdiff/diff'
 import { attachSnapEye } from '../../src/client/runtime.js'
 import { generateRunId, isValidRunId } from '../../src/core/ids.js'
 
 const FIXED_DATE = Date.UTC(2026, 0, 2, 3, 4, 5)
 
 describe('in-page SnapEye runtime', () => {
+  it('waits for hydration before resolving a target that does not exist yet', async () => {
+    let ready = false
+    const harness = createRuntime({
+      waitForReady: vi.fn(async () => { ready = true })
+    })
+    harness.document.querySelector.mockImplementation(selector =>
+      ready && selector === '#target' ? harness.element : null)
+
+    const result = await harness.api.capture('hydrated', '#target', {
+      runId: 'hydrated_target',
+      waitFor: '#target'
+    })
+
+    expect(result.status).toBe('ok')
+    expect(harness.snapdom).toHaveBeenCalledWith(harness.element, expect.any(Object))
+  })
+
+  it('captures the replacement node when readiness hydrates an existing target', async () => {
+    const replacement = createElement('target')
+    let current
+    const harness = createRuntime({
+      waitForReady: vi.fn(async () => { current = replacement })
+    })
+    current = harness.element
+    harness.document.querySelector.mockImplementation(() => current)
+
+    const result = await harness.api.capture('hydrated', '#target', {
+      runId: 'replaced_target',
+      waitFor: '#ready'
+    })
+
+    expect(result.status).toBe('ok')
+    expect(harness.snapdom).toHaveBeenCalledWith(replacement, expect.any(Object))
+  })
+
+  it('publishes a readiness error even before a target has been resolved', async () => {
+    const harness = createRuntime({
+      waitForReady: async () => { throw new Error('Readiness failed') }
+    })
+
+    const result = await harness.api.capture('hydrated', '#target', { runId: 'readiness_error' })
+
+    expect(result).toMatchObject({ status: 'error', error: { code: 'CAPTURE_FAILED' } })
+    expect(harness.store.commitResult).toHaveBeenCalledWith('readiness_error', result)
+    expect(harness.snapdom).not.toHaveBeenCalled()
+  })
+
   it('auto-generates a run id for the JavaScript API and persists the same id terminally', async () => {
     const random = () => 0
     const harness = createRuntime({ random })
@@ -206,13 +254,14 @@ describe('in-page SnapEye runtime', () => {
     })
   })
 
-  it('uses the effective custom diff color when extracting regions', async () => {
+  it.each([0, 1])('extracts custom-color regions only when SnapDiff reports changes (%i pixels)', async changedPixels => {
     const diffCanvasOutput = createCanvas(20, 10, 'diff')
+    const diffColor = changedPixels ? [10, 20, 30] : [128, 128, 128]
     const pixels = new Uint8ClampedArray(20 * 10 * 4)
-    pixels.set([10, 20, 30, 255], 0)
+    pixels.set([...diffColor, 255], 0)
     diffCanvasOutput.getContext('2d').getImageData.mockReturnValue({ data: pixels })
     const diffCanvas = vi.fn(() => ({
-      diff: 1,
+      diff: changedPixels,
       total: 200,
       ratio: 0.005,
       width: 20,
@@ -247,7 +296,7 @@ describe('in-page SnapEye runtime', () => {
 
     const result = await harness.api.diff('custom-color', harness.element, {
       runId: 'custom_diff_color',
-      diffOptions: { diffColor: [10, 20, 30] },
+      diffOptions: { diffColor },
       regionOptions: {
         tileSize: 1,
         gapTiles: 0,
@@ -259,12 +308,88 @@ describe('in-page SnapEye runtime', () => {
     expect(result).toMatchObject({
       status: 'ok',
       diff: {
-        changed: true,
-        regionCount: 1,
-        regions: [{ x: 0, y: 0, width: 1, height: 1, aggregate: false }]
+        changed: changedPixels > 0,
+        regionCount: changedPixels,
+        regions: changedPixels ? [{ x: 0, y: 0, width: 1, height: 1, aggregate: false }] : []
       }
     })
-    expect(diffCanvas.mock.calls[0][2]).toMatchObject({ diffColor: [10, 20, 30] })
+    expect(diffCanvas.mock.calls[0][2]).toMatchObject({ diffColor })
+    expect(diffCanvas).toHaveBeenCalledOnce()
+    expect(diffCanvasOutput.getContext('2d').getImageData).toHaveBeenCalledTimes(changedPixels)
+  })
+
+  it.each([
+    { label: 'grey wash', diffOptions: { diffColor: [230, 230, 230] }, comparisons: 2 },
+    { label: 'default AA colour', diffOptions: { diffColor: [255, 255, 0] }, comparisons: 2 },
+    { label: 'custom AA colour', diffOptions: { diffColor: [0, 255, 0], aaColor: [0, 255, 0] }, comparisons: 2 },
+    { label: 'existing mask', diffOptions: { diffColor: [0, 0, 0], diffMask: true }, comparisons: 1 }
+  ])('keeps real regions separate from $label pixels', async ({ diffOptions, comparisons }) => {
+    // A black/white edge shifts by one anti-aliased column; those ten pixels
+    // must remain excluded. The only real change is a separate 2x2 square.
+    const baseline = new Uint8ClampedArray(20 * 10 * 4)
+    for (let y = 0; y < 10; y++) {
+      for (let x = 0; x < 20; x++) {
+        baseline.set(x >= 10 ? [255, 255, 255, 255] : [0, 0, 0, 255], (y * 20 + x) * 4)
+      }
+    }
+    const current = baseline.slice()
+    for (let y = 0; y < 10; y++) current.set([128, 128, 128, 255], (y * 20 + 9) * 4)
+    for (let y = 4; y < 6; y++) {
+      for (let x = 3; x < 5; x++) current.set([255, 255, 255, 255], (y * 20 + x) * 4)
+    }
+    const outputs = []
+    const diffCanvas = vi.fn((before, after, options) => {
+      const pixels = new Uint8ClampedArray(baseline.length)
+      const stats = diffPixels(baseline, current, pixels, 20, 10, options)
+      const canvas = createCanvas(20, 10, `comparison-${outputs.length}`)
+      canvas.getContext('2d').getImageData.mockReturnValue({ data: pixels })
+      outputs.push(canvas)
+      return { ...stats, width: 20, height: 10, dimsMatch: true, canvas }
+    })
+    const store = createStore({
+      readBaseline: vi.fn(async () => ({
+        image: new Blob(['baseline'], { type: 'image/png' }),
+        meta: {
+          schemaVersion: 1,
+          name: 'ambiguous-colour',
+          image: {
+            coordinateSpace: 'target-css-px',
+            cssWidth: 20,
+            cssHeight: 10,
+            pixelWidth: 20,
+            pixelHeight: 10,
+            scale: 1
+          }
+        }
+      }))
+    })
+    const harness = createRuntime({ store, diffCanvas, settle: false, stabilize: false })
+    harness.window.createImageBitmap = async () => ({ width: 20, height: 10, close () {} })
+
+    const result = await harness.api.diff('ambiguous-colour', '#target', {
+      runId: 'ambiguous_colour',
+      diffOptions,
+      regionOptions: { tileSize: 1, gapTiles: 1, minRegionCssSide: 0, minRegionCssArea: 0 }
+    })
+
+    expect(result).toMatchObject({
+      status: 'ok',
+      diff: {
+        changed: true,
+        changedRatio: 0.02,
+        regionCount: 1,
+        regions: [{ x: 3, y: 4, width: 2, height: 2, aggregate: false }]
+      }
+    })
+    expect(diffCanvas).toHaveBeenCalledTimes(comparisons)
+    expect(harness.snapdom).toHaveBeenCalledOnce()
+    expect(outputs[0].convertToBlob).toHaveBeenCalledOnce()
+    if (comparisons === 2) {
+      expect(diffCanvas.mock.calls[1][2]).toMatchObject({ ...diffOptions, diffMask: true })
+      expect(outputs[1].convertToBlob).not.toHaveBeenCalled()
+    }
+    const diffArtifact = store.writeRunArtifact.mock.calls.find(([, filename]) => filename === 'diff.png')[2]
+    expect(await diffArtifact.text()).toBe('comparison-0')
   })
 
   it('feeds one captured frame sequence to GIF, video, and filmstrip without recapturing', async () => {

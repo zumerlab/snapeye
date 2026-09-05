@@ -6,6 +6,7 @@
  * source file is modified and `apply: 'serve'` keeps it out of production.
  */
 import { randomBytes } from 'node:crypto'
+import { realpathSync } from 'node:fs'
 import { lstat } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
@@ -231,14 +232,28 @@ function assertKnownKeys (value, known, label) {
  */
 function clientDependenciesToPrebundle (root) {
   const requireFromRoot = createRequire(join(root, 'noop.js'))
+  const requireFromPackage = installedPackageRequire(requireFromRoot)
   const include = []
   for (const dependency of CLIENT_DEPENDENCIES) {
     if (canResolve(requireFromRoot, dependency)) include.push(dependency)
-    else if (canResolve(requireFromRoot, '@zumer/snapeye/package.json')) {
+    else if (requireFromPackage && canResolve(requireFromPackage, dependency)) {
       include.push(`@zumer/snapeye > ${dependency}`)
     }
   }
   return include
+}
+
+function installedPackageRequire (requireFromRoot) {
+  // SnapEye does not export package.json, and its entry points are import-only.
+  // A bare require.resolve therefore cannot discover even an installed copy.
+  // Use Node's search paths and follow the package link so pnpm's private
+  // dependencies are resolved relative to the actual installation.
+  for (const directory of requireFromRoot.resolve.paths('@zumer/snapeye') || []) {
+    try {
+      return createRequire(realpathSync(join(directory, '@zumer/snapeye/package.json')))
+    } catch {}
+  }
+  return null
 }
 
 function canResolve (requireFrom, specifier) {

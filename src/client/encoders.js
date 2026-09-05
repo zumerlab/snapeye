@@ -67,34 +67,41 @@ export async function encodeVideoFrames (frames, timestampsMs, options = {}) {
   const recorderOptions = {}
   if (mimeType) recorderOptions.mimeType = mimeType
   if (options.bitrate) recorderOptions.videoBitsPerSecond = options.bitrate
-  const recorder = new MediaRecorderImpl(stream, recorderOptions)
   const chunks = []
-  const stopped = new Promise((resolve, reject) => {
-    recorder.onstop = resolve
-    recorder.onerror = event => reject(event.error || new Error('MediaRecorder failed'))
-  })
-  recorder.ondataavailable = event => {
-    if (event.data?.size) chunks.push(event.data)
-  }
-
-  const context = stage.getContext('2d')
   const fallbackDelay = Math.max(1, Math.round(1000 / fps))
+  let recorder
   let stopRequested = false
   try {
+    // Constructor and context failures must release the capture stream too.
+    recorder = new MediaRecorderImpl(stream, recorderOptions)
+    const stopped = new Promise((resolve, reject) => {
+      recorder.onstop = resolve
+      recorder.onerror = event => reject(event.error || new Error('MediaRecorder failed'))
+    })
+    // A recorder can fail during start/draw, before the first awaited frame.
+    // Attach a handler immediately; the awaited promise still propagates it.
+    stopped.catch(() => {})
+    recorder.ondataavailable = event => {
+      if (event.data?.size) chunks.push(event.data)
+    }
+    const context = stage.getContext('2d')
+    const track = stream.getVideoTracks?.()[0]
     recorder.start()
     for (let index = 0; index < frames.length; index++) {
       context.clearRect(0, 0, stage.width, stage.height)
       context.drawImage(frames[index], 0, 0, stage.width, stage.height)
-      const track = stream.getVideoTracks?.()[0]
       if (typeof track?.requestFrame === 'function') track.requestFrame()
       const measuredDelay = frameDelay(timestampsMs, index, options.durationMs)
-      await wait(Number.isFinite(measuredDelay) && measuredDelay > 0 ? measuredDelay : fallbackDelay)
+      await Promise.race([
+        wait(Number.isFinite(measuredDelay) && measuredDelay > 0 ? measuredDelay : fallbackDelay),
+        stopped
+      ])
     }
     recorder.stop()
     stopRequested = true
     await stopped
   } finally {
-    if (!stopRequested) {
+    if (recorder && !stopRequested) {
       try { recorder.stop() } catch {}
     }
     stream.getTracks?.().forEach(track => track.stop())

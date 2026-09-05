@@ -190,6 +190,7 @@ export function createSnapEyeHttpHandler ({
       if (typeof log === 'function') log(`[browser] ${body.toString('utf8')}`)
       return sendEmpty(res, 204)
     } catch (error) {
+      discardBody(req)
       if (!(error instanceof RequestError) && typeof log === 'function') {
         log(`request failed: ${error?.message || String(error)}`)
       }
@@ -272,6 +273,15 @@ function hasToken (req, expected) {
 }
 
 async function readBody (req, limit) {
+  // A request can disconnect while an earlier write holds this run's queue.
+  // Its abort/end event has already fired by the time we get here; waiting for
+  // another event would leave the queue locked forever.
+  if (req.aborted || req.destroyed) {
+    throw requestError(400, 'INVALID_REQUEST', 'Request body was aborted')
+  }
+  if (req.readableEnded) {
+    throw requestError(400, 'INVALID_REQUEST', 'Request body has already been consumed')
+  }
   const declared = req.headers['content-length']
   if (declared != null) {
     if (typeof declared !== 'string' || !/^\d+$/.test(declared)) {

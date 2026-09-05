@@ -18,7 +18,15 @@ export function createHttpArtifactStore ({
     if (token) headers.set('x-snapeye-token', token)
     let response
     try {
-      response = await fetchImpl(`${base}${path}`, { ...init, headers })
+      response = await fetchImpl(`${base}${path}`, {
+        ...init,
+        headers,
+        mode: 'same-origin',
+        credentials: 'same-origin',
+        // The token belongs to this dev server. A host redirect must never
+        // forward it or turn a redirected HTML response into a successful write.
+        redirect: 'error'
+      })
     } catch (error) {
       throw persistFailure(error)
     }
@@ -31,7 +39,7 @@ export function createHttpArtifactStore ({
       throw new SnapEyeError(ERROR_CODES.PERSIST_FAILED, message)
     }
     if (expected) {
-      const received = response.headers.get('content-type')?.split(';')[0].trim()
+      const received = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase()
       if (received !== expected) {
         throw new SnapEyeError(ERROR_CODES.PERSIST_FAILED, 'SnapEye artifact server returned an unexpected content type')
       }
@@ -42,11 +50,16 @@ export function createHttpArtifactStore ({
   async function readBaseline (name) {
     const response = await request(`/baseline?name=${encodeURIComponent(name)}`, { method: 'GET' })
     if (response.status === 204) return null
-    const received = response.headers.get('content-type')?.split(';')[0].trim()
+    const received = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase()
     if (received !== BASELINE_TYPE) {
       throw new SnapEyeError(ERROR_CODES.PERSIST_FAILED, 'SnapEye artifact server returned an invalid baseline')
     }
-    const decoded = decodeBaselineEnvelope(await response.arrayBuffer())
+    let decoded
+    try {
+      decoded = decodeBaselineEnvelope(await response.arrayBuffer())
+    } catch {
+      throw new SnapEyeError(ERROR_CODES.PERSIST_FAILED, 'SnapEye artifact server returned an invalid baseline')
+    }
     return {
       name,
       meta: decoded.meta,
@@ -120,4 +133,3 @@ function formatLogValue (value) {
 }
 
 export { BASELINE_TYPE }
-

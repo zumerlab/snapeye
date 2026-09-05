@@ -20,15 +20,17 @@
  *   3  --fail-on-change and the diff reported a change
  */
 import { spawn } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { lstat, readFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { PROTOCOL_VERSION, TRIGGER_PARAM } from './core/protocol.js'
 import { generateRunId, isValidName, isValidRunId } from './core/ids.js'
+import { validateResult } from './core/result.js'
 import { ensureAgentDoc } from './node/agent-doc.js'
 
 const OPERATIONS = new Set(['capture', 'diff', 'record'])
 const DEFAULT_URL = process.env.SNAPEYE_URL || 'http://localhost:5173'
 const DEFAULT_TIMEOUT_MS = 30_000
+const HEALTH_TIMEOUT_MS = 5_000
 const POLL_INTERVAL_MS = 100
 
 const USAGE = `snapeye — capture, compare, and record from a running dev server
@@ -76,7 +78,7 @@ export async function main (argv) {
 
   if (options.command === 'init') return await runInit(options)
 
-  const health = await readHealth(options.origin)
+  const health = await readHealth(options.origin, Math.min(options.timeout, HEALTH_TIMEOUT_MS))
   if (!health.ok) {
     return fail(
       2,
@@ -92,6 +94,15 @@ export async function main (argv) {
   const resultFile = join(artifactRoot, 'runs', options.runId, 'result.json')
   const triggerUrl = buildTriggerUrl(options)
 
+  // Results are immutable. Reusing an occupied namespace can make a new
+  // operation appear to succeed by returning the previous run's verdict.
+  try {
+    await lstat(join(artifactRoot, 'runs', options.runId))
+    return fail(2, `Run ID ${options.runId} already exists. Use a fresh --run value or omit --run.`)
+  } catch (error) {
+    if (error.code !== 'ENOENT') return fail(2, `Could not inspect the run directory: ${error.message}`)
+  }
+
   if (options.open) {
     note(`opening ${triggerUrl}`)
     openUrl(triggerUrl, options.openWith)
@@ -100,7 +111,12 @@ export async function main (argv) {
     note(triggerUrl)
   }
 
-  const result = await pollForResult(resultFile, options.timeout)
+  let result
+  try {
+    result = await pollForResult(resultFile, options.timeout, options)
+  } catch (error) {
+    return fail(2, `Could not read the terminal result: ${error.message}`)
+  }
   if (!result) {
     return fail(
       2,
@@ -219,6 +235,9 @@ function parseArgs (argv) {
   } catch {
     throw new Error(`Invalid --url: ${options.url}`)
   }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('--url must use http: or https:')
+  }
   options.origin = parsed.origin
   options.pageUrl = parsed
   return options
@@ -238,20 +257,24 @@ function buildTriggerUrl (options) {
   return url.href
 }
 
-async function readHealth (origin) {
-  let response
+async function readHealth (origin, timeoutMs) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  timer.unref()
   try {
-    response = await fetch(new URL('/__snapeye/health', origin))
-  } catch (error) {
-    return { ok: false, reason: error?.cause?.code || error?.message || 'unreachable' }
-  }
-  if (!response.ok) return { ok: false, reason: `HTTP ${response.status}` }
-  try {
+    const response = await fetch(new URL('/__snapeye/health', origin), { signal: controller.signal })
+    if (!response.ok) return { ok: false, reason: `HTTP ${response.status}` }
     const body = await response.json()
     if (body?.status !== 'ok') return { ok: false, reason: 'unexpected health payload' }
     return { ok: true, body }
-  } catch {
-    return { ok: false, reason: 'health did not return JSON' }
+  } catch (error) {
+    if (controller.signal.aborted) {
+      return { ok: false, reason: `health check timed out after ${timeoutMs}ms` }
+    }
+    if (error instanceof SyntaxError) return { ok: false, reason: 'health did not return JSON' }
+    return { ok: false, reason: error?.cause?.code || error?.message || 'unreachable' }
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -267,18 +290,25 @@ function resolveArtifactRoot (override, health) {
   return isAbsolute(reported) ? reported : resolve(process.cwd(), reported)
 }
 
-async function pollForResult (file, timeoutMs) {
+async function pollForResult (file, timeoutMs, expected) {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     try {
       // The result file is published atomically and only once, so reading it
       // successfully means the run is terminal. No partial read is possible.
-      return JSON.parse(await readFile(file, 'utf8'))
+      const result = JSON.parse(await readFile(file, 'utf8'))
+      const error = validateResult(result, expected.runId)
+      if (error) throw new Error(error)
+      if (result.operation !== expected.operation || result.name !== expected.name) {
+        throw new Error('result does not match the requested operation and baseline')
+      }
+      return result
     } catch (error) {
-      if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error
+      if (error.code !== 'ENOENT') throw error
     }
-    if (Date.now() >= deadline) return null
-    await sleep(POLL_INTERVAL_MS)
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) return null
+    await sleep(Math.min(POLL_INTERVAL_MS, remaining))
   }
 }
 

@@ -266,10 +266,15 @@ export interface SnapEyePixelDiffOptions {
 }
 
 export interface SnapEyeRegionOptions {
+  /** Positive integer raster pixels per clustering tile. */
   tileSize?: number
+  /** Nonnegative integer radius in tiles for connecting changes. */
   gapTiles?: number
+  /** Nonnegative finite minimum CSS side length. */
   minRegionCssSide?: number
+  /** Nonnegative finite minimum CSS bounding-box area. */
   minRegionCssArea?: number
+  /** Nonnegative integer region limit; 0 always aggregates changes. */
   maxRegions?: number
 }
 

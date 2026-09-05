@@ -30,7 +30,9 @@ export function maskFromDiffBuffer (rgba, diffColor = [255, 0, 0]) {
   const [r, g, b] = diffColor
   const mask = new Uint8Array(rgba.length / 4)
   for (let i = 0, p = 0; i < rgba.length; i += 4, p++) {
-    if (rgba[i] === r && rgba[i + 1] === g && rgba[i + 2] === b) mask[p] = 1
+    // A diff mask leaves unchanged pixels transparent. Their RGB bytes can
+    // still match a custom diffColor (notably black) without being a change.
+    if (rgba[i + 3] > 0 && rgba[i] === r && rgba[i + 1] === g && rgba[i + 2] === b) mask[p] = 1
   }
   return mask
 }
@@ -54,6 +56,13 @@ export function extractRegions (mask, width, height, options = {}) {
     minRegionCssArea = DIFF_DEFAULTS.minRegionCssArea,
     maxRegions = DIFF_DEFAULTS.maxRegions
   } = options
+
+  assertOption('scale', scale, value => value > 0)
+  assertOption('tileSize', tileSize, value => Number.isSafeInteger(value) && value >= 1)
+  assertOption('gapTiles', gapTiles, value => Number.isSafeInteger(value) && value >= 0)
+  assertOption('minRegionCssSide', minRegionCssSide, value => value >= 0)
+  assertOption('minRegionCssArea', minRegionCssArea, value => value >= 0)
+  assertOption('maxRegions', maxRegions, value => Number.isSafeInteger(value) && value >= 0)
 
   const boxes = clusterMask(mask, width, height, tileSize, gapTiles)
 
@@ -82,6 +91,12 @@ export function extractRegions (mask, width, height, options = {}) {
     regionCount: kept.length,
     regionsTruncated: false,
     regions: kept.map(r => ({ ...r, aggregate: false }))
+  }
+}
+
+function assertOption (name, value, isValid) {
+  if (!Number.isFinite(value) || !isValid(value)) {
+    throw new RangeError(`Invalid SnapEye region option: ${name}`)
   }
 }
 
@@ -165,12 +180,14 @@ function clusterMask (mask, width, height, tileSize, gapTiles) {
       if (maxX[cur] > bx2) bx2 = maxX[cur]
       if (maxY[cur] > by2) by2 = maxY[cur]
 
-      for (let dy = -gapTiles; dy <= gapTiles; dy++) {
-        const ny = cy + dy
-        if (ny < 0 || ny >= rows) continue
-        for (let dx = -gapTiles; dx <= gapTiles; dx++) {
-          const nx = cx + dx
-          if (nx < 0 || nx >= cols) continue
+      // Visit only real tiles. A large configured radius must not spend time
+      // scanning billions of coordinates outside a small capture.
+      const left = Math.max(0, cx - gapTiles)
+      const right = Math.min(cols - 1, cx + gapTiles)
+      const top = Math.max(0, cy - gapTiles)
+      const bottom = Math.min(rows - 1, cy + gapTiles)
+      for (let ny = top; ny <= bottom; ny++) {
+        for (let nx = left; nx <= right; nx++) {
           const n = ny * cols + nx
           if (!hit[n] || seen[n]) continue
           seen[n] = 1

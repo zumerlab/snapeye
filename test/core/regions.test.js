@@ -50,6 +50,17 @@ describe('raster region adaptation', () => {
     })
   })
 
+  it('ignores transparent background pixels when the diff color is black', () => {
+    const rgba = new Uint8Array([
+      0, 0, 0, 0,
+      0, 0, 0, 255,
+      255, 0, 0, 0
+    ])
+
+    expect([...maskFromDiffBuffer(rgba, [0, 0, 0])]).toEqual([0, 1, 0])
+    expect([...maskFromDiffBuffer(rgba)]).toEqual([0, 0, 0])
+  })
+
   it('clusters separated changes and reports stable CSS regions', () => {
     const mask = maskWithRects(30, 12, [
       { x: 1, y: 2, width: 3, height: 4 },
@@ -91,6 +102,34 @@ describe('raster region adaptation', () => {
     }).regions).toEqual([
       { x: 2, y: 1, width: 2, height: 2, aggregate: false }
     ])
+  })
+
+  it('bounds a large gap radius to the capture grid', () => {
+    const mask = maskWithRects(4, 1, [
+      { x: 0, y: 0, width: 1, height: 1 },
+      { x: 3, y: 0, width: 1, height: 1 }
+    ])
+
+    expect(extractRegions(mask, 4, 1, {
+      ...exactRegions,
+      gapTiles: Number.MAX_SAFE_INTEGER
+    }).regions).toEqual([
+      { x: 0, y: 0, width: 4, height: 1, aggregate: false }
+    ])
+  })
+
+  it.each([
+    ['scale', 0], ['scale', Infinity],
+    ['tileSize', 0], ['tileSize', -1], ['tileSize', 0.5], ['tileSize', NaN],
+    ['gapTiles', -1], ['gapTiles', 0.5], ['gapTiles', Infinity],
+    ['minRegionCssSide', -1], ['minRegionCssSide', NaN],
+    ['minRegionCssArea', -1], ['minRegionCssArea', Infinity],
+    ['maxRegions', -1], ['maxRegions', 0.5], ['maxRegions', Infinity]
+  ])('rejects invalid %s=%s before clustering', (name, value) => {
+    expect(() => extractRegions(new Uint8Array([1]), 1, 1, {
+      ...exactRegions,
+      [name]: value
+    })).toThrow(`Invalid SnapEye region option: ${name}`)
   })
 
   it('drops regions below the configured noise floor', () => {

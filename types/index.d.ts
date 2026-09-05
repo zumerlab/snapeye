@@ -30,6 +30,7 @@ export type {
   SnapEyeFilmstripMetadata,
   SnapEyeFilmstripOptions,
   SnapEyeFilmstripOutput,
+  SnapEyeHealth,
   SnapEyeImageMetadata,
   SnapEyeOperation,
   SnapEyePixelDiffOptions,
@@ -60,4 +61,3 @@ export type {
   SnapEyeLegacyLogEvent,
   SnapEyeLegacySnapEvent
 } from './server.js'
-

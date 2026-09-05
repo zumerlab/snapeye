@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createServer } from 'node:http'
+import { createServer, request as httpRequest } from 'node:http'
+import { once } from 'node:events'
 import { access, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -306,6 +307,52 @@ describe('SnapEye HTTP handler', () => {
     expect(body).not.toContain(secret)
     expect(body).not.toContain(sandbox)
     expect(body).not.toContain('/secret/source.js')
+  })
+
+  it('releases the run queue when a waiting upload disconnects', async () => {
+    const originalWrite = store.writeRunArtifact
+    let releaseWrite
+    let markWriting
+    const writeGate = new Promise(resolve => { releaseWrite = resolve })
+    const writing = new Promise(resolve => { markWriting = resolve })
+    store.writeRunArtifact = async (...args) => {
+      markWriting()
+      await writeGate
+      return originalWrite(...args)
+    }
+
+    const first = authorizedRequest('/artifact?run=queuedRun&filename=current.png', {
+      method: 'POST',
+      headers: { 'content-type': 'image/png' },
+      body: new Uint8Array([1, 2, 3])
+    })
+    await writing
+
+    // Deliver the next request's headers while the first write owns the queue,
+    // then disconnect before that queued handler starts reading its body.
+    const incoming = once(server, 'request')
+    const upload = httpRequest(`${baseUrl}${ENDPOINT}/artifact?run=queuedRun&filename=diff.png`, {
+      method: 'POST',
+      headers: {
+        'x-snapeye-token': TOKEN,
+        'content-type': 'image/png',
+        'content-length': '10'
+      }
+    })
+    upload.on('error', () => {})
+    upload.write(Buffer.from([1]))
+    const [queued] = await incoming
+    const aborted = once(queued, 'aborted')
+    upload.destroy()
+    await aborted
+    releaseWrite()
+
+    expect((await first).status).toBe(204)
+    const result = buildResult({ runId: 'queuedRun', status: 'ok', operation: 'capture' })
+    expect((await postResult('queuedRun', result)).status).toBe(204)
+    expect(await store.readResult('queuedRun')).toEqual(result)
+    await expect(access(join(store.paths.runs, 'queuedRun', 'diff.png')))
+      .rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   async function request (path, init) {

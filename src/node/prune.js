@@ -10,9 +10,9 @@
  */
 import { readdir, rm, lstat, open } from 'node:fs/promises'
 import { constants as FS_CONSTANTS } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { isValidRunId } from '../core/ids.js'
-import { isInside } from './paths.js'
+import { assertNoSymlinkEscape, isInside } from './paths.js'
 
 /**
  * @param {object} options
@@ -89,7 +89,10 @@ async function terminalTime (dir) {
 }
 
 async function assertRunsRoot (runsDir) {
-  if (typeof runsDir !== 'string' || runsDir.length === 0) throw unsafeRunsRoot(runsDir)
+  if (typeof runsDir !== 'string' || !isAbsolute(runsDir)) throw unsafeRunsRoot(runsDir)
+  // The artifact root is part of the boundary too: lstat(runsDir) alone would
+  // follow a symlink at `.snapeye` and allow pruning another directory's runs.
+  assertNoSymlinkEscape(dirname(runsDir), runsDir)
   let stat
   try {
     stat = await lstat(runsDir)

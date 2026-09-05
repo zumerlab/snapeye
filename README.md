@@ -154,6 +154,11 @@ The CLI checks health, mints a run ID, opens the trigger URL, waits for the
 terminal result, prints it to stdout, and exits with a code that already answers
 the question. No polling loop to write.
 
+The health check is bounded to 5 seconds (or `--timeout`, if shorter). An
+existing run directory is rejected before opening the page, and the terminal
+result must match the requested run, operation, and baseline. Use a fresh run
+ID for every invocation, including concurrent commands.
+
 ```
 0  status "ok"        2  environment problem (no dev server, no plugin, timed out)
 1  status "error"     3  --fail-on-change and the diff reported a change
@@ -311,6 +316,9 @@ Everything is restored afterwards. With this in place the same page reports
 **0 false positives in 12 runs** at randomized phases, while a real change is
 still detected.
 
+Running animations resume after capture. Stability waits also have a timer
+fallback when a background tab stops receiving animation frames.
+
 What it does not pin is anything JavaScript draws frame by frame — a `<canvas>`
 render loop, a WebGL scene, a chart animating through `requestAnimationFrame`.
 For those, capture at a known point with `--wait`, or expose a class the app
@@ -439,6 +447,9 @@ Every operation also accepts `waitFor` (milliseconds or a selector),
 await window.snapeye.diff('chart', '#chart', { waitFor: '#chart.is-rendered' })
 await window.snapeye.capture('hero', '#hero', { stabilize: false })
 ```
+
+The target selector is resolved after `waitFor` completes, so it can refer to
+an element that hydration creates or replaces while SnapEye is waiting.
 
 `runId` is optional only in the JavaScript API. SnapEye generates one and
 returns it in the resolved terminal result. The promise resolves only after all

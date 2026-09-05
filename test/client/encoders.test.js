@@ -6,6 +6,54 @@ import {
 } from '../../src/client/encoders.js'
 
 describe('client encoders', () => {
+  it('releases capture tracks when the MediaRecorder constructor rejects the stream', async () => {
+    const track = { stop: vi.fn() }
+    const stream = { getTracks: () => [track] }
+    const stage = { captureStream: () => stream }
+    class UnsupportedRecorder {
+      constructor () { throw new Error('Unsupported recording stream') }
+    }
+
+    await expect(encodeVideoFrames([{ width: 20, height: 10 }], [0], {
+      document: { createElement: () => stage },
+      MediaRecorder: UnsupportedRecorder
+    })).rejects.toThrow('Unsupported recording stream')
+
+    expect(track.stop).toHaveBeenCalledOnce()
+  })
+
+  it('aborts promptly and releases tracks when the recorder fails during a frame delay', async () => {
+    vi.useFakeTimers()
+    try {
+      const track = { stop: vi.fn() }
+      const context = { clearRect: vi.fn(), drawImage: vi.fn() }
+      const stage = {
+        captureStream: () => ({ getTracks: () => [track] }),
+        getContext: () => context
+      }
+      class FailingRecorder {
+        start () { setTimeout(() => this.onerror({ error: new Error('Encoding failed') }), 10) }
+        stop () { this.onstop?.() }
+      }
+      const pending = encodeVideoFrames([
+        { width: 20, height: 10 },
+        { width: 20, height: 10 }
+      ], [0, 1000], {
+        document: { createElement: () => stage },
+        MediaRecorder: FailingRecorder
+      })
+      const rejected = expect(pending).rejects.toThrow('Encoding failed')
+
+      await vi.advanceTimersByTimeAsync(10)
+      await rejected
+
+      expect(context.drawImage).toHaveBeenCalledOnce()
+      expect(track.stop).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('encodes supplied canvases as a GIF without performing a new capture', async () => {
     const frames = [
       rgbaCanvas([255, 0, 0, 255, 0, 255, 0, 255]),

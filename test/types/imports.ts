@@ -1,7 +1,8 @@
-import { attachSnapEye, createSnapEyeHandler } from '@zumer/snapeye'
+import { attachSnapEye, createSnapEyeHandler, type SnapEyeHealth } from '@zumer/snapeye'
 import {
   createHttpArtifactStore,
   type ArtifactStore,
+  type SnapEyeHealth as ClientSnapEyeHealth,
   type SnapEyeResult
 } from '@zumer/snapeye/client'
 import createLegacyHandler from '@zumer/snapeye/server'
@@ -13,6 +14,17 @@ const store: ArtifactStore = createHttpArtifactStore({
   endpoint: '/__snapeye',
   token: 'ephemeral-token'
 })
+
+const health: SnapEyeHealth = {
+  status: 'ok',
+  name: '@zumer/snapeye',
+  version: '0.3.0',
+  protocolVersion: 1,
+  artifactRoot: '.snapeye',
+  artifactRootResolved: null
+}
+const clientHealth: ClientSnapEyeHealth = health
+void clientHealth
 
 const api = attachSnapEye({
   snapdom,
@@ -48,4 +60,3 @@ void bare
 void plugin
 void createSnapEyeHandler()
 void createLegacyHandler()
-

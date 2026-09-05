@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createServer } from 'node:http'
+import { once } from 'node:events'
 import { createHttpArtifactStore, BASELINE_TYPE } from '../../src/client/http-store.js'
 import { decodeBaselineEnvelope } from '../../src/core/envelope.js'
 
@@ -80,6 +82,9 @@ describe('HTTP artifact store', () => {
     for (const [, init] of fetch.mock.calls) {
       expect(init.method).toBe('POST')
       expect(init.headers.get('x-snapeye-token')).toBe('secret')
+      expect(init.mode).toBe('same-origin')
+      expect(init.credentials).toBe('same-origin')
+      expect(init.redirect).toBe('error')
     }
     expect(fetch.mock.calls[2][1].body).toBe(JSON.stringify(result))
     expect(fetch.mock.calls[3][1].body).toBe('[warn] bad {"count":2}')
@@ -108,6 +113,38 @@ describe('HTTP artifact store', () => {
     })
   })
 
+  it('refuses redirects before forwarding a credential or reporting a successful write', async () => {
+    const forwardedTokens = []
+    const server = createServer((request, response) => {
+      request.resume()
+      if (request.url.startsWith('/redirect/')) {
+        response.writeHead(307, { location: '/destination' })
+      } else {
+        forwardedTokens.push(request.headers['x-snapeye-token'])
+        response.writeHead(204)
+      }
+      response.end()
+    })
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    try {
+      const store = createHttpArtifactStore({
+        endpoint: `http://127.0.0.1:${server.address().port}/redirect`,
+        token: 'private-token'
+      })
+
+      await expect(store.commitResult('redirectedRun', {})).rejects.toMatchObject({
+        code: 'PERSIST_FAILED'
+      })
+      expect(forwardedTokens).toEqual([])
+    } finally {
+      server.closeIdleConnections?.()
+      await new Promise((resolve, reject) => {
+        server.close(error => error ? reject(error) : resolve())
+      })
+    }
+  })
+
   it('rejects a baseline response with an unexpected content type', async () => {
     const store = createHttpArtifactStore({
       fetch: vi.fn(async () => new Response('not an envelope', {
@@ -117,6 +154,27 @@ describe('HTTP artifact store', () => {
     })
 
     await expect(store.readBaseline('hero')).rejects.toMatchObject({
+      code: 'PERSIST_FAILED',
+      message: 'SnapEye artifact server returned an invalid baseline'
+    })
+  })
+
+  it.each(['malformed', 'truncated'])('normalizes a %s baseline response into a persistence error', async kind => {
+    const store = createHttpArtifactStore({
+      fetch: vi.fn(async () => {
+        const response = new Response(new Uint8Array([0, 0, 0, 20]), {
+          status: 200,
+          headers: { 'content-type': BASELINE_TYPE }
+        })
+        if (kind === 'truncated') {
+          response.arrayBuffer = async () => { throw new Error('private socket details') }
+        }
+        return response
+      })
+    })
+
+    await expect(store.readBaseline('hero')).rejects.toMatchObject({
+      name: 'SnapEyeError',
       code: 'PERSIST_FAILED',
       message: 'SnapEye artifact server returned an invalid baseline'
     })

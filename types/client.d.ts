@@ -37,6 +37,7 @@ export type {
   SnapEyeFilmstripCell,
   SnapEyeFilmstripMetadata,
   SnapEyeFilmstripOptions,
+  SnapEyeHealth,
   SnapEyeImageMetadata,
   SnapEyeOperation,
   SnapEyePixelDiffOptions,

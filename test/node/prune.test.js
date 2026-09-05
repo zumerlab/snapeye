@@ -101,4 +101,17 @@ describe('run pruning', () => {
       .rejects.toMatchObject({ code: 'INVALID_PATH' })
     expect(await readFile(join(outside, 'victim', 'sentinel'), 'utf8')).toBe('keep')
   })
+
+  it.skipIf(process.platform === 'win32')('rejects a symlink at the artifact root before pruning', async () => {
+    const outside = join(sandbox, 'outside-artifacts')
+    const victim = join(outside, 'runs', 'victim')
+    await mkdir(victim, { recursive: true })
+    await writeFile(join(victim, 'sentinel'), 'keep')
+    await rm(root, { recursive: true })
+    await symlink(outside, root)
+
+    await expect(pruneRuns({ runsDir, maxRuns: 0 }))
+      .rejects.toMatchObject({ code: 'INVALID_PATH' })
+    expect(await readFile(join(victim, 'sentinel'), 'utf8')).toBe('keep')
+  })
 })
