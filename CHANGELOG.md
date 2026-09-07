@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+#### [v0.4.0](https://github.com/zumerlab/snapeye/compare/v0.3.1...v0.4.0)
+
+> 7 September 2026
+
+- feat: add support for SVG artifacts and SnapDOM options in CLI [`fb6f98f`](https://github.com/zumerlab/snapeye/commit/fb6f98fe313ecfe278d77721d7e8fc939d87c765)
+- Support SnapDOM v3 captures and verify packed consumers [`1f63c71`](https://github.com/zumerlab/snapeye/commit/1f63c711e146ecf670ea5e3e85f466d880a80597)
+- update [`03dfea8`](https://github.com/zumerlab/snapeye/commit/03dfea839b86814644b4629c46c0c5500a114145)
+- Elimina el script prepublishOnly del archivo package.json [`7b7abe3`](https://github.com/zumerlab/snapeye/commit/7b7abe3628a6a388c59c8701c8eaf5748be9cccd)
+
 #### [v0.3.1](https://github.com/zumerlab/snapeye/compare/v0.3.0...v0.3.1)
 
 > 5 September 2026
