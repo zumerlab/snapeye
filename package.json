@@ -77,7 +77,13 @@
     "node": ">=18"
   },
   "peerDependencies": {
-    "@zumer/snapdom": "^2.24.10 || ^3.0.0-0"
+    "@zumer/snapdom": "^2.24.10 || ^3.0.0-0",
+    "vite": "^5.0.0 || ^6.0.0 || ^7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "vite": {
+      "optional": true
+    }
   },
   "publishConfig": {
     "access": "public"

@@ -23,6 +23,7 @@ const TEXT_TYPE = 'text/plain'
 
 const ARTIFACT_TYPES = new Map([
   [ARTIFACTS.current, 'image/png'],
+  [ARTIFACTS.svg, 'image/svg+xml'],
   [ARTIFACTS.diff, 'image/png'],
   [ARTIFACTS.frames, 'image/png'],
   [ARTIFACTS.gif, 'image/gif'],

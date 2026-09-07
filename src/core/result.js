@@ -26,6 +26,7 @@ const KNOWN_OPERATIONS = new Set([...OPERATIONS, 'unknown'])
  * @param {object} [input.image] `{ coordinateSpace, cssWidth, ... }`
  * @param {object} [input.diff]
  * @param {object} [input.record]
+ * @param {object} [input.timing] `{ captureMs }`: time spent inside SnapDOM
  * @param {object} [input.artifacts] relative paths, from the run directory
  * @param {object} [input.error] `{ code, message, details? }`
  * @returns {object} result.json payload
@@ -46,6 +47,7 @@ export function buildResult (input) {
   if (input.image) result.image = input.image
   if (input.diff) result.diff = input.diff
   if (input.record) result.record = input.record
+  if (input.timing) result.timing = input.timing
   if (input.artifacts && Object.keys(input.artifacts).length) result.artifacts = input.artifacts
   if (input.status === 'error') result.error = normalizeError(input.error)
 

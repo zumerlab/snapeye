@@ -7,7 +7,9 @@ import {
   OPERATIONS,
   PROTOCOL_VERSION,
   SCHEMA_VERSION,
-  TRIGGER_PARAM
+  SNAPDOM_OPTIONS_PARAM,
+  TRIGGER_PARAM,
+  parseSnapdomOptionsParam
 } from '../core/protocol.js'
 import { assertName, assertRunId, generateRunId, isValidRunId } from '../core/ids.js'
 import { buildErrorResult, buildResult } from '../core/result.js'
@@ -52,6 +54,12 @@ const DEFAULTS = {
   settleTimeout: 2500,
   /** Ceiling for a selector `waitFor`. */
   waitTimeout: 5000,
+  /**
+   * Keep the SVG SnapDOM rasterized as `current.svg` next to the PNG. The
+   * pixels say that a capture looks wrong; the SVG says why (which fonts got
+   * embedded, which images resolved, what the clone contained).
+   */
+  svg: true,
   snapdomOptions: {
     format: 'png',
     dpr: 1,
@@ -270,9 +278,15 @@ export function attachSnapEye (userOptions = {}) {
     } catch (error) {
       throw persistenceError(error)
     }
+    const artifacts = { baseline: `../../baselines/${name}.png` }
+    if (captured.svg != null) {
+      await persistRunArtifacts(runId, [{ filename: ARTIFACTS.svg, data: captured.svg }])
+      artifacts.svg = ARTIFACTS.svg
+    }
     return {
       image: captured.image,
-      artifacts: { baseline: `../../baselines/${name}.png` }
+      timing: { captureMs: captured.captureMs },
+      artifacts
     }
   }
 
@@ -337,23 +351,30 @@ export function attachSnapEye (userOptions = {}) {
       changed ? comparison.height : 0,
       { scale: captured.image.scale, ...operationOptions.regionOptions }
     )
-    await persistRunArtifacts(runId, [
+    const artifacts = {
+      baseline: `../../baselines/${name}.png`,
+      current: ARTIFACTS.current,
+      diff: ARTIFACTS.diff
+    }
+    const runArtifacts = [
       { filename: ARTIFACTS.current, data: captured.blob },
       { filename: ARTIFACTS.diff, data: diffBlob }
-    ])
+    ]
+    if (captured.svg != null) {
+      runArtifacts.push({ filename: ARTIFACTS.svg, data: captured.svg })
+      artifacts.svg = ARTIFACTS.svg
+    }
+    await persistRunArtifacts(runId, runArtifacts)
 
     return {
       image: captured.image,
+      timing: { captureMs: captured.captureMs },
       diff: {
         changed,
         changedRatio: computeChangedRatio(comparison.diff, comparison.total),
         ...regions
       },
-      artifacts: {
-        baseline: `../../baselines/${name}.png`,
-        current: ARTIFACTS.current,
-        diff: ARTIFACTS.diff
-      }
+      artifacts
     }
   }
 
@@ -502,11 +523,17 @@ export function attachSnapEye (userOptions = {}) {
     // would otherwise turn the entire sequence into copies of the last frame.
     captureOptions.canvas = null
     if (operationOptions.scale != null) captureOptions.scale = Number(operationOptions.scale)
+    // Baselines and diffs keep the serialized SVG; recording frames never do.
+    // The legacy handler has no run directory to keep it in.
+    const keepSvg = includeBlob && !legacy && (operationOptions.svg ?? options.svg) !== false
     let canvas
+    let svg = null
+    const captureStart = clock.now()
     try {
       const result = await options.snapdom(element, captureOptions)
       if (typeof result?.toCanvas === 'function') canvas = await result.toCanvas({ canvas: null })
       else if (typeof options.snapdom.toCanvas === 'function') canvas = await options.snapdom.toCanvas(element, captureOptions)
+      if (keepSvg) svg = readSvg(result)
       // SnapDOM rasterizes its serialized viewBox, which can be larger than
       // the element's logical box when root transforms or bleed are present.
       // Using that viewport keeps target-css-px axis-aligned with the file and
@@ -521,6 +548,7 @@ export function attachSnapEye (userOptions = {}) {
     } catch (error) {
       throw operationError(error, 'capture')
     }
+    const captureMs = Math.max(0, Math.round(clock.now() - captureStart))
     if (!canvas || !(canvas.width > 0) || !(canvas.height > 0)) {
       throw new SnapEyeError(ERROR_CODES.CAPTURE_FAILED, 'SnapEye produced an empty capture')
     }
@@ -530,7 +558,7 @@ export function attachSnapEye (userOptions = {}) {
       pixelWidth: canvas.width,
       pixelHeight: canvas.height
     }, COORDINATE_SPACE)
-    return { canvas, image, blob: includeBlob ? await canvasToPng(canvas) : null }
+    return { canvas, image, blob: includeBlob ? await canvasToPng(canvas) : null, svg, captureMs }
   }
 
   function resolveTarget (input, operationOptions) {
@@ -708,7 +736,27 @@ export function attachSnapEye (userOptions = {}) {
       scale: url.searchParams.get('scale') || undefined,
       waitFor: url.searchParams.get('wait') || undefined,
       stabilize: url.searchParams.get('stabilize') === '0' ? false : undefined,
-      settle: url.searchParams.get('settle') === '0' ? false : undefined
+      settle: url.searchParams.get('settle') === '0' ? false : undefined,
+      svg: url.searchParams.get('svg') === '0' ? false : undefined
+    }
+    const rawSnapdomOptions = url.searchParams.get(SNAPDOM_OPTIONS_PARAM)
+    if (rawSnapdomOptions && KNOWN_OPERATIONS.has(operation)) {
+      try {
+        urlOptions.snapdomOptions = parseSnapdomOptionsParam(rawSnapdomOptions)
+      } catch (error) {
+        // Capturing with options other than the ones asked for would publish a
+        // verdict about the wrong configuration. Fail the run instead.
+        return commitError({
+          runId,
+          operation,
+          name,
+          startedAt: new Date(clock.dateNow()).toISOString(),
+          error: new SnapEyeError(
+            operation === 'diff' ? ERROR_CODES.DIFF_FAILED : operation === 'record' ? ERROR_CODES.RECORD_FAILED : ERROR_CODES.CAPTURE_FAILED,
+            `Invalid ${SNAPDOM_OPTIONS_PARAM} in the URL: ${error.message}`
+          )
+        })
+      }
     }
     if (operation === 'capture') return capture(name, target, urlOptions)
     if (operation === 'diff') return diff(name, target, urlOptions)
@@ -862,7 +910,38 @@ function publicOptions (options) {
     stabilize: options.stabilize !== false,
     settle: options.settle !== false,
     waitFor: options.waitFor ?? null,
+    svg: options.svg !== false,
     snapdomOptions: { ...options.snapdomOptions }
+  }
+}
+
+/**
+ * The SVG behind a SnapDOM result, as text. v2 and v3 both expose it through
+ * `toRaw()` as a data URL (percent-encoded, occasionally base64); anything
+ * else is left out rather than guessed at.
+ */
+function readSvg (result) {
+  if (typeof result?.toRaw !== 'function') return null
+  let raw
+  try {
+    raw = result.toRaw()
+  } catch {
+    return null
+  }
+  if (typeof raw !== 'string') return null
+  if (/^\s*<(\?xml|svg)/i.test(raw)) return raw
+  const comma = raw.indexOf(',')
+  if (!/^data:image\/svg\+xml/i.test(raw) || comma < 0) return null
+  const header = raw.slice(0, comma)
+  const payload = raw.slice(comma + 1)
+  try {
+    if (/;base64/i.test(header)) {
+      const bytes = Uint8Array.from(atob(payload), character => character.charCodeAt(0))
+      return new TextDecoder().decode(bytes)
+    }
+    return decodeURIComponent(payload)
+  } catch {
+    return null
   }
 }
 

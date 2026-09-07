@@ -22,10 +22,11 @@
 import { spawn } from 'node:child_process'
 import { lstat, readFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
-import { PROTOCOL_VERSION, TRIGGER_PARAM } from './core/protocol.js'
+import { PROTOCOL_VERSION, SNAPDOM_OPTIONS_PARAM, TRIGGER_PARAM, parseSnapdomOptionsParam } from './core/protocol.js'
 import { generateRunId, isValidName, isValidRunId } from './core/ids.js'
 import { validateResult } from './core/result.js'
 import { ensureAgentDoc } from './node/agent-doc.js'
+import { startStandaloneServer } from './node/standalone.js'
 
 const OPERATIONS = new Set(['capture', 'diff', 'record'])
 const DEFAULT_URL = process.env.SNAPEYE_URL || 'http://localhost:5173'
@@ -39,11 +40,18 @@ Usage
   snapeye capture <name> [options]
   snapeye diff    <name> [options]
   snapeye record  <name> [options]
+  snapeye serve   <file.html|dir> [options]   serve a page with SnapEye, no dev server needed
   snapeye init                        teach your coding agent to use SnapEye
 
 Options
   --url <url>          page to trigger on (default ${DEFAULT_URL})
+  --serve <file|dir>   serve this HTML file or directory for the operation instead of --url
+  --snapdom <path>     with serve: use a local SnapDOM build (a dist/ directory or snapdom.mjs)
+  --port <n>           with serve: port to listen on (default: a free one)
   --target <selector>  CSS selector to capture (default: the page)
+  --snapdom-options <json>
+                       SnapDOM options for this operation, e.g. '{"embedFonts":true}'
+  --no-svg             do not keep current.svg, the SVG SnapDOM rasterized, in the run
   --run <id>           run id (default: generated)
   --root <dir>         artifact root (default: reported by /__snapeye/health)
   --timeout <ms>       how long to wait for the terminal result (default ${DEFAULT_TIMEOUT_MS})
@@ -77,7 +85,34 @@ export async function main (argv) {
   }
 
   if (options.command === 'init') return await runInit(options)
+  if (options.command === 'serve') return await runServe(options)
 
+  // `--serve` is the same operation against a page SnapEye hosts itself: the
+  // server lives exactly as long as this one run.
+  let standalone = null
+  if (options.serve) {
+    try {
+      standalone = await startStandaloneServer({
+        entry: options.serve,
+        snapdom: options.snapdom,
+        port: options.port ?? 0,
+        root: options.root ?? undefined
+      })
+    } catch (error) {
+      return fail(2, `Could not serve ${options.serve}: ${error.message}`, error.hint)
+    }
+    options.origin = standalone.origin
+    options.pageUrl = new URL(standalone.url)
+    note(`serving ${standalone.url}`)
+  }
+  try {
+    return await runOperation(options)
+  } finally {
+    await standalone?.close().catch(() => {})
+  }
+}
+
+async function runOperation (options) {
   const health = await readHealth(options.origin, Math.min(options.timeout, HEALTH_TIMEOUT_MS))
   if (!health.ok) {
     return fail(
@@ -132,6 +167,42 @@ export async function main (argv) {
 }
 
 /**
+ * Serve an HTML file or a directory with the SnapEye plugin and stay up until
+ * Ctrl+C, for pages that have no dev server: an issue repro, a scratch page, a
+ * static export. One JSON line with the URL goes to stdout so a script can read
+ * it; every operation then runs against that URL from another shell.
+ */
+async function runServe (options) {
+  let server
+  try {
+    server = await startStandaloneServer({
+      entry: options.entry,
+      snapdom: options.snapdom,
+      port: options.port ?? 0,
+      root: options.root ?? undefined
+    })
+  } catch (error) {
+    return fail(2, `Could not serve ${options.entry}: ${error.message}`, error.hint)
+  }
+
+  process.stdout.write(JSON.stringify({
+    status: 'ok',
+    url: server.url,
+    health: `${server.origin}/__snapeye/health`,
+    artifactRoot: server.artifactRoot,
+    snapdom: server.snapdom ? { esm: server.snapdom.esm, iife: server.snapdom.iife } : null
+  }) + '\n')
+  note(`serving ${server.url}`)
+  note(`run \`snapeye capture <name> --url ${server.url}\` from another shell; Ctrl+C stops the server`)
+
+  await new Promise(resolve => {
+    for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => resolve())
+  })
+  await server.close().catch(() => {})
+  return 0
+}
+
+/**
  * Write the agent instructions. This is the step that decides whether SnapEye
  * gets used at all: without it the agent does the task, verifies nothing, and
  * reports that it looks fine.
@@ -172,8 +243,15 @@ function parseArgs (argv) {
     file: null,
     failOnChange: false,
     record: {},
+    serve: null,
+    entry: null,
+    snapdom: null,
+    port: null,
+    snapdomOptions: null,
+    svg: true,
     help: false
   }
+  let urlGiven = false
   const positional = []
 
   for (let index = 0; index < argv.length; index++) {
@@ -186,7 +264,12 @@ function parseArgs (argv) {
 
     switch (argument) {
       case '-h': case '--help': options.help = true; break
-      case '--url': options.url = next(); break
+      case '--url': options.url = next(); urlGiven = true; break
+      case '--serve': options.serve = next(); break
+      case '--snapdom': options.snapdom = next(); break
+      case '--port': options.port = positiveInteger(next(), '--port'); break
+      case '--snapdom-options': options.snapdomOptions = snapdomOptionsFlag(next()); break
+      case '--no-svg': options.svg = false; break
       case '--target': options.target = next(); break
       case '--run': options.runId = next(); break
       case '--root': options.root = next(); break
@@ -214,7 +297,17 @@ function parseArgs (argv) {
     if (positional.length > 1) throw new Error('init takes no positional arguments')
     return { ...options, command: 'init' }
   }
-  if (!operation) throw new Error('An operation is required: capture, diff, record, or init')
+  if (operation === 'serve') {
+    if (!name) throw new Error('serve needs an HTML file or a directory')
+    if (positional.length > 2) throw new Error(`Unexpected argument: ${positional[2]}`)
+    if (options.serve) throw new Error('serve takes the file as its argument, not --serve')
+    return { ...options, command: 'serve', entry: name }
+  }
+  if (!operation) throw new Error('An operation is required: capture, diff, record, serve, or init')
+  if (options.serve && urlGiven) throw new Error('Use either --url or --serve, not both')
+  if (!options.serve && (options.snapdom || options.port != null)) {
+    throw new Error('--snapdom and --port only apply to --serve or the serve command')
+  }
   if (!OPERATIONS.has(operation)) throw new Error(`Unknown operation: ${operation}`)
   if (!name) throw new Error(`${operation} needs a name`)
   if (!isValidName(name)) {
@@ -251,6 +344,8 @@ function buildTriggerUrl (options) {
   if (options.target) url.searchParams.set('target', options.target)
   if (options.waitFor != null) url.searchParams.set('wait', options.waitFor)
   if (!options.stabilize) url.searchParams.set('stabilize', '0')
+  if (options.svg === false) url.searchParams.set('svg', '0')
+  if (options.snapdomOptions) url.searchParams.set(SNAPDOM_OPTIONS_PARAM, JSON.stringify(options.snapdomOptions))
   for (const [key, value] of Object.entries(options.record)) {
     if (value != null) url.searchParams.set(key, String(value))
   }
@@ -313,19 +408,30 @@ async function pollForResult (file, timeoutMs, expected) {
 }
 
 function openUrl (url, openWith) {
-  const [command, ...args] = openWith
-    ? [...openWith.split(' '), url]
+  // `--open-with` is a shell fragment, so quoting survives: an app name with a
+  // space (`open -a "Google Chrome"`) must not become two arguments. The URL is
+  // ours (built and encoded above) and is appended quoted.
+  const [command, args, spawnOptions] = openWith
+    ? [`${openWith} ${JSON.stringify(url)}`, [], { shell: true }]
     : process.platform === 'darwin'
-      ? ['open', url]
+      ? ['open', [url], {}]
       : process.platform === 'win32'
-        ? ['cmd', '/c', 'start', '', url]
-        : ['xdg-open', url]
+        ? ['cmd', ['/c', 'start', '', url], {}]
+        : ['xdg-open', [url], {}]
   try {
-    const child = spawn(command, args, { stdio: 'ignore', detached: true })
+    const child = spawn(command, args, { ...spawnOptions, stdio: 'ignore', detached: true })
     child.on('error', error => note(`could not open a browser (${error.message}); open the URL manually`))
     child.unref()
   } catch (error) {
     note(`could not open a browser (${error.message}); open the URL manually`)
+  }
+}
+
+function snapdomOptionsFlag (value) {
+  try {
+    return parseSnapdomOptionsParam(value)
+  } catch (error) {
+    throw new Error(`--snapdom-options: ${error.message}`)
   }
 }
 

@@ -93,6 +93,23 @@ Enabling `hotkey` makes Shift + that key run a real `capture()`, replacing the
 textarea, select, or contenteditable element, and while any other modifier is
 held.
 
+### A page with no dev server
+
+An issue repro, a scratch file, a static export: pass the file (or a directory)
+to `--serve` and SnapEye hosts it for the length of that run, client injected,
+nothing to configure. Vite must be installed; it is the same plugin applied to a
+folder.
+
+```sh
+npx snapeye capture issue-493 --serve repro/issue.html --target '#test'
+npx snapeye capture issue-493 --serve repro/issue.html --target '#test' --snapdom ../snapdom/dist
+npx snapeye serve repro/issue.html      # stays up; prints the URL for other commands
+```
+
+`--snapdom` points the client, and any `<script>` on the page that loads
+SnapDOM from unpkg or jsDelivr, at a local build: the way to verify a SnapDOM
+fix before it is published.
+
 ## Use it in a real task
 
 SnapEye does not start Codex, Claude Code, Cursor, or another coding agent. Start
@@ -183,8 +200,14 @@ npx snapeye capture header-desktop --target '#site-header'
 npx snapeye diff   header-desktop --target '#site-header' --fail-on-change
 npx snapeye record menu --target '.menu' --duration 3000 --fps 10 --format gif
 npx snapeye diff dashboard --url http://localhost:5173/settings?tab=billing
+npx snapeye diff fonts --target '#text' --snapdom-options '{"embedFonts":false}' --fail-on-change
+npx snapeye capture issue --serve repro/issue.html --snapdom ../snapdom/dist --target '#test'
 npx snapeye --help
 ```
+
+`--snapdom-options` applies a JSON object of SnapDOM options to that run only,
+which turns "does this option change the render?" into a capture, a diff, and
+an exit code.
 
 Use `--no-open` when the agent drives its own browser: the CLI prints the URL,
 the agent navigates to it, and the CLI still does the waiting.
@@ -306,6 +329,10 @@ Three optional parameters control timing: `wait` holds the operation for a
 number of milliseconds or until a CSS selector matches, `stabilize=0` turns off
 motion pinning, and `settle=0` turns off waiting for the page to go quiet (both
 below).
+
+Two more shape the capture: `snapdomOptions` carries a JSON object of SnapDOM
+options for that run (a value that does not parse fails the run rather than
+capturing with other options), and `svg=0` skips `current.svg`.
 
 ### Determinism
 
@@ -546,13 +573,21 @@ An agent must inspect `status` before any operation-specific field:
       { "x": 420, "y": 85, "width": 180, "height": 42, "aggregate": false }
     ]
   },
+  "timing": { "captureMs": 412 },
   "artifacts": {
     "baseline": "../../baselines/dashboard.png",
     "current": "current.png",
-    "diff": "diff.png"
+    "diff": "diff.png",
+    "svg": "current.svg"
   }
 }
 ```
+
+`timing.captureMs` is the time SnapDOM itself took, not the whole run.
+`current.svg` is the SVG SnapDOM rasterized for the capture: read it when the
+question is why an image looks the way it does (`grep -c '@font-face'`, the
+`data:font` and `<image>` URLs it embeds) before opening any PNG. Both are
+present for `capture` and `diff`; `--no-svg` (or `svg: false`) drops the file.
 
 All region coordinates are CSS pixels from the top-left of the axis-aligned
 capture viewport SnapDOM produced for the target. For a normal untransformed
@@ -621,6 +656,7 @@ Stable error codes include `INVALID_RUN_ID`, `INVALID_NAME`,
   runs/
     abc124/
       current.png
+      current.svg
       diff.png
       result.json
     abc125/
@@ -680,7 +716,8 @@ adapter. Those concerns belong to the agent or host environment.
 
 The CLI is not an exception: it opens one URL and waits for one file. It does
 not navigate, interact, or decide anything. Getting the app into the right state
-remains the agent's job.
+remains the agent's job. `serve` only hosts a folder with Vite and the plugin so
+that a page without a dev server can be that URL.
 
 ## License
 

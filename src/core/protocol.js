@@ -31,6 +31,8 @@ export const ERROR_CODES = {
 export const ARTIFACTS = {
   result: 'result.json',
   current: 'current.png',
+  /** The SVG SnapDOM rasterized for `current.png`: the "why" behind the pixels. */
+  svg: 'current.svg',
   diff: 'diff.png',
   frames: 'frames.png',
   gif: 'recording.gif',
@@ -58,6 +60,29 @@ export const DEFAULTS = {
 
 /** URL query key that triggers an operation on page load. */
 export const TRIGGER_PARAM = '__snapeye'
+
+/** URL query key carrying a JSON object of SnapDOM options for one operation. */
+export const SNAPDOM_OPTIONS_PARAM = 'snapdomOptions'
+
+/**
+ * Parse the `snapdomOptions` URL value. Shared by the CLI (which refuses a bad
+ * value before opening anything) and the runtime (which publishes it as a
+ * terminal error instead of capturing with options the caller never asked for).
+ * @param {string} text
+ * @returns {Record<string, unknown>}
+ */
+export function parseSnapdomOptionsParam (text) {
+  let value
+  try {
+    value = JSON.parse(text)
+  } catch {
+    throw new Error('snapdomOptions must be valid JSON')
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('snapdomOptions must be a JSON object')
+  }
+  return value
+}
 
 /** Coordinate space used by every region and dimension SnapEye reports. */
 export const COORDINATE_SPACE = 'target-css-px'

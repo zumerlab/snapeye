@@ -94,9 +94,16 @@ export interface SnapEyeErrorPayload {
   details?: Record<string, unknown>
 }
 
+export interface SnapEyeTiming {
+  /** Milliseconds spent inside SnapDOM for the capture behind this result. */
+  captureMs: number
+}
+
 export interface SnapEyeArtifactPaths {
   baseline?: string
   current?: 'current.png'
+  /** The SVG SnapDOM rasterized for the capture. Absent when `svg: false`. */
+  svg?: 'current.svg'
   diff?: 'diff.png'
   frames?: 'frames.png'
   gif?: 'recording.gif'
@@ -121,6 +128,7 @@ export interface SnapEyeCaptureSuccessResult extends SnapEyeResultBase {
   name: string
   target: SnapEyeTargetMetadata
   image: SnapEyeImageMetadata
+  timing: SnapEyeTiming
   artifacts: SnapEyeArtifactPaths & { baseline: string }
   diff?: never
   record?: never
@@ -133,6 +141,7 @@ export interface SnapEyeDiffSuccessResult extends SnapEyeResultBase {
   name: string
   target: SnapEyeTargetMetadata
   image: SnapEyeImageMetadata
+  timing: SnapEyeTiming
   diff: SnapEyeDiffMetadata
   artifacts: SnapEyeArtifactPaths & {
     baseline: string
@@ -151,6 +160,7 @@ export interface SnapEyeRecordSuccessResult extends SnapEyeResultBase {
   image: SnapEyeImageMetadata
   record: SnapEyeRecordMetadata
   artifacts: SnapEyeArtifactPaths & { frames: 'frames.png' }
+  timing?: never
   diff?: never
   error?: never
 }
@@ -163,6 +173,7 @@ export interface SnapEyeErrorResult<
   error: SnapEyeErrorPayload
   artifacts?: SnapEyeArtifactPaths
   image?: never
+  timing?: never
   diff?: never
   record?: never
 }
@@ -251,6 +262,8 @@ export interface SnapEyeBaseOperationOptions {
   /** Alternative to the positional target argument. */
   target?: SnapEyeTarget | null
   scale?: number
+  /** Keep `current.svg`, the SVG SnapDOM rasterized, in the run. Defaults to true. */
+  svg?: boolean
   snapdomOptions?: SnapdomOptions
 }
 

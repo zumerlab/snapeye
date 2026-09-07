@@ -114,6 +114,7 @@ export function createHttpArtifactStore ({
 
 function artifactType (filename) {
   if (filename.endsWith('.png')) return 'image/png'
+  if (filename.endsWith('.svg')) return 'image/svg+xml'
   if (filename.endsWith('.gif')) return 'image/gif'
   if (filename.endsWith('.webm')) return 'video/webm'
   if (filename.endsWith('.mp4')) return 'video/mp4'

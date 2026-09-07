@@ -540,6 +540,40 @@ describe.skipIf(!chromePath).sequential('Vite integration', () => {
     expect(JSON.parse(missing.stdout).error.code).toBe('BASELINE_NOT_FOUND')
   }, 60_000)
 
+  it('keeps the SVG behind the pixels, times SnapDOM, and applies per-run SnapDOM options', async () => {
+    const capture = await runCli(['capture', 'cli-svg', '--target', '#target'])
+    expect(capture.code).toBe(0)
+    const captured = JSON.parse(capture.stdout)
+    expect(captured.timing.captureMs).toBeGreaterThanOrEqual(0)
+    expect(captured.artifacts).toEqual({ baseline: '../../baselines/cli-svg.png', svg: 'current.svg' })
+    const svg = await readFile(join(artifactRoot, 'runs', captured.runId, 'current.svg'), 'utf8')
+    expect(svg).toMatch(/^\s*<svg/)
+    expect(svg).toContain('id="target"')
+
+    // The same pixels, so no change; and the run keeps its own SVG next to the PNGs.
+    const unchanged = await runCli(['diff', 'cli-svg', '--target', '#target', '--fail-on-change'])
+    expect(unchanged.code).toBe(0)
+    const compared = JSON.parse(unchanged.stdout)
+    expect(compared.artifacts.svg).toBe('current.svg')
+    expect((await readdir(join(artifactRoot, 'runs', compared.runId))).sort())
+      .toEqual(['current.png', 'current.svg', 'diff.png', 'result.json'])
+
+    const withoutSvg = await runCli(['diff', 'cli-svg', '--target', '#target', '--no-svg'])
+    expect(withoutSvg.code).toBe(0)
+    const slim = JSON.parse(withoutSvg.stdout)
+    expect(slim.artifacts).not.toHaveProperty('svg')
+    expect((await readdir(join(artifactRoot, 'runs', slim.runId))).sort())
+      .toEqual(['current.png', 'diff.png', 'result.json'])
+
+    // `scale: 2` reached SnapDOM in the browser: the raster doubled and can no
+    // longer be compared with the baseline. Exit 1 with the documented code.
+    const rescaled = await runCli(['diff', 'cli-svg', '--target', '#target', '--snapdom-options', '{"scale":2}'])
+    expect(rescaled.code).toBe(1)
+    const incompatible = JSON.parse(rescaled.stdout)
+    expect(incompatible.error.code).toBe('BASELINE_INCOMPATIBLE')
+    expect(incompatible.error.details.current.pixelWidth).toBe(incompatible.error.details.baseline.pixelWidth * 2)
+  }, 60_000)
+
   it('tells the agent the environment is broken instead of hanging', async () => {
     const noServer = await runCli(['diff', 'anything'], { url: 'http://127.0.0.1:1', navigate: false })
     expect(noServer.code).toBe(2)

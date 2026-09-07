@@ -96,3 +96,42 @@ describe('snapeye CLI arguments', () => {
       .toBe(resolve(process.cwd(), 'custom-dir'))
   })
 })
+
+describe('snapeye CLI: standalone serving and per-run SnapDOM options', () => {
+  it('passes --snapdom-options through to the URL as one JSON parameter', () => {
+    const options = parseArgs(['capture', 'fonts', '--snapdom-options', '{"embedFonts":true,"scale":2}'])
+    const url = new URL(buildTriggerUrl(options))
+    expect(JSON.parse(url.searchParams.get('snapdomOptions'))).toEqual({ embedFonts: true, scale: 2 })
+    expect(url.searchParams.has('svg')).toBe(false)
+  })
+
+  it.each([
+    { label: 'invalid JSON', value: '{embedFonts: true}' },
+    { label: 'an array', value: '[1,2]' },
+    { label: 'a scalar', value: 'true' }
+  ])('refuses --snapdom-options that is $label before opening anything', ({ value }) => {
+    expect(() => parseArgs(['capture', 'fonts', '--snapdom-options', value])).toThrow(/--snapdom-options/)
+  })
+
+  it('turns --no-svg into svg=0', () => {
+    const url = new URL(buildTriggerUrl(parseArgs(['diff', 'fonts', '--no-svg'])))
+    expect(url.searchParams.get('svg')).toBe('0')
+  })
+
+  it('accepts serve as a command with the page as its argument', () => {
+    expect(parseArgs(['serve', 'issue.html'])).toMatchObject({ command: 'serve', entry: 'issue.html', snapdom: null, port: null })
+    expect(parseArgs(['serve', 'docs/', '--snapdom', './dist', '--port', '8493']))
+      .toMatchObject({ command: 'serve', entry: 'docs/', snapdom: './dist', port: 8493 })
+    expect(() => parseArgs(['serve'])).toThrow(/needs an HTML file/)
+    expect(() => parseArgs(['serve', 'a.html', 'b.html'])).toThrow(/Unexpected argument/)
+  })
+
+  it('lets an operation host its own page with --serve, and rejects mixing it with --url', () => {
+    const options = parseArgs(['capture', 'issue', '--serve', 'issue.html', '--snapdom', './dist', '--target', '#test'])
+    expect(options).toMatchObject({ operation: 'capture', serve: 'issue.html', snapdom: './dist' })
+    expect(() => parseArgs(['capture', 'issue', '--serve', 'issue.html', '--url', 'http://localhost:3000']))
+      .toThrow(/either --url or --serve/)
+    expect(() => parseArgs(['capture', 'issue', '--snapdom', './dist'])).toThrow(/--snapdom and --port/)
+    expect(() => parseArgs(['capture', 'issue', '--port', '8080'])).toThrow(/--snapdom and --port/)
+  })
+})

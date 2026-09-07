@@ -818,3 +818,141 @@ function deferred () {
   })
   return { promise, resolve, reject }
 }
+
+describe('in-page SnapEye runtime: the SVG behind the pixels', () => {
+  const SVG = '<svg xmlns="http://www.w3.org/2000/svg"><style>@font-face{font-family:Noto}</style></svg>'
+  const snapdomWithRaw = (raw = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(SVG)}`) => vi.fn(async () => ({
+    meta: { w0: 20, h0: 10 },
+    toCanvas: async () => createCanvas(20, 10, 'raw'),
+    toRaw: () => raw
+  }))
+
+  it('keeps current.svg and reports the SnapDOM time for a capture', async () => {
+    let now = 0
+    const harness = createRuntime({
+      snapdom: vi.fn(async () => {
+        now += 37
+        return { meta: { w0: 20, h0: 10 }, toCanvas: async () => createCanvas(), toRaw: () => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(SVG)}` }
+      }),
+      now: () => now
+    })
+    const result = await harness.api.capture('fonts', { runId: 'svg_capture' })
+
+    expect(result.status).toBe('ok')
+    expect(result.timing).toEqual({ captureMs: 37 })
+    expect(result.artifacts).toEqual({ baseline: '../../baselines/fonts.png', svg: 'current.svg' })
+    const call = harness.store.writeRunArtifact.mock.calls.find(([, filename]) => filename === 'current.svg')
+    expect(call).toBeTruthy()
+    expect(call[0]).toBe('svg_capture')
+    expect(call[2]).toBe(SVG)
+    // The SVG is a run artifact, never part of the committed baseline.
+    expect(harness.store.writeBaseline.mock.calls[0][1].meta).not.toHaveProperty('svg')
+  })
+
+  it('decodes a base64 data URL and accepts SVG text as-is', async () => {
+    const base64 = `data:image/svg+xml;base64,${btoa(SVG)}`
+    for (const raw of [base64, SVG]) {
+      const harness = createRuntime({ snapdom: snapdomWithRaw(raw) })
+      await harness.api.capture('fonts', { runId: `svg_${raw === SVG ? 'text' : 'b64'}` })
+      const call = harness.store.writeRunArtifact.mock.calls.find(([, filename]) => filename === 'current.svg')
+      expect(call[2]).toBe(SVG)
+    }
+  })
+
+  it('skips the SVG when the operation or the runtime opts out, and when SnapDOM has none', async () => {
+    const optedOut = createRuntime({ snapdom: snapdomWithRaw() })
+    const result = await optedOut.api.capture('fonts', { runId: 'svg_off', svg: false })
+    expect(result.artifacts).toEqual({ baseline: '../../baselines/fonts.png' })
+    expect(optedOut.store.writeRunArtifact).not.toHaveBeenCalled()
+
+    const runtimeOff = createRuntime({ snapdom: snapdomWithRaw(), svg: false })
+    await runtimeOff.api.capture('fonts', { runId: 'svg_runtime_off' })
+    expect(runtimeOff.store.writeRunArtifact).not.toHaveBeenCalled()
+    expect(runtimeOff.api.options.svg).toBe(false)
+
+    const noRaw = createRuntime()
+    const plain = await noRaw.api.capture('fonts', { runId: 'svg_absent' })
+    expect(plain.artifacts).toEqual({ baseline: '../../baselines/fonts.png' })
+    expect(plain.timing).toEqual({ captureMs: 0 })
+  })
+
+  it('writes current.svg next to current.png and diff.png for a diff', async () => {
+    const store = createStore({
+      readBaseline: vi.fn(async () => ({
+        image: new Blob(['baseline'], { type: 'image/png' }),
+        meta: {
+          schemaVersion: 1,
+          name: 'fonts',
+          image: { coordinateSpace: 'target-css-px', cssWidth: 20, cssHeight: 10, pixelWidth: 20, pixelHeight: 10, scale: 1 }
+        }
+      }))
+    })
+    const diffCanvas = vi.fn(() => ({ diff: 0, total: 200, ratio: 0, width: 20, height: 10, dimsMatch: true, canvas: createCanvas(20, 10, 'diff') }))
+    const harness = createRuntime({ store, diffCanvas, snapdom: snapdomWithRaw(), settle: false, stabilize: false })
+    harness.window.createImageBitmap = async () => ({ width: 20, height: 10, close () {} })
+
+    const result = await harness.api.diff('fonts', '#target', { runId: 'svg_diff' })
+    expect(result.status).toBe('ok')
+    expect(result.timing).toEqual({ captureMs: 0 })
+    expect(result.artifacts).toEqual({
+      baseline: '../../baselines/fonts.png',
+      current: 'current.png',
+      diff: 'diff.png',
+      svg: 'current.svg'
+    })
+    const filenames = harness.store.writeRunArtifact.mock.calls
+      .filter(([runId]) => runId === 'svg_diff').map(([, filename]) => filename)
+    expect(filenames.sort()).toEqual(['current.png', 'current.svg', 'diff.png'])
+  })
+
+  it('never keeps an SVG for recording frames', async () => {
+    let now = 0
+    const harness = createRuntime({
+      snapdom: snapdomWithRaw(),
+      now: () => now,
+      wait: async milliseconds => { now += milliseconds },
+      encodeGif: vi.fn(async () => new Blob(['gif'], { type: 'image/gif' }))
+    })
+    const result = await harness.api.record('frames', { runId: 'svg_record', duration: 300, fps: 5 })
+    expect(result.status).toBe('ok')
+    expect(result).not.toHaveProperty('timing')
+    const filenames = harness.store.writeRunArtifact.mock.calls.map(([, filename]) => filename)
+    expect(filenames).not.toContain('current.svg')
+  })
+})
+
+describe('in-page SnapEye runtime: SnapDOM options from the URL', () => {
+  it('applies a JSON snapdomOptions parameter to that run only', async () => {
+    const harness = createRuntime()
+    const href = 'http://app.test/?__snapeye=capture&name=fonts&run=url_opts&target=%23target&snapdomOptions=' +
+      encodeURIComponent('{"embedFonts":true,"scale":2}')
+    const result = await harness.api.runUrlTrigger(href)
+    expect(result.status).toBe('ok')
+    expect(harness.snapdom.mock.calls[0][1]).toMatchObject({ embedFonts: true, scale: 2 })
+    expect(harness.api.options.snapdomOptions.embedFonts).toBe(false)
+  })
+
+  it('honours svg=0 from the URL', async () => {
+    const harness = createRuntime({
+      snapdom: vi.fn(async () => ({ meta: { w0: 20, h0: 10 }, toCanvas: async () => createCanvas(), toRaw: () => '<svg/>' }))
+    })
+    const result = await harness.api.runUrlTrigger('http://app.test/?__snapeye=capture&name=fonts&run=url_svg_off&svg=0')
+    expect(result.artifacts).toEqual({ baseline: '../../baselines/fonts.png' })
+  })
+
+  it.each([
+    { label: 'invalid JSON', value: '{embedFonts:true}', expected: /valid JSON/ },
+    { label: 'a non-object', value: '[true]', expected: /JSON object/ }
+  ])('publishes a terminal error instead of capturing with $label', async ({ value, expected }) => {
+    const harness = createRuntime()
+    const href = `http://app.test/?__snapeye=diff&name=fonts&run=url_bad_opts&snapdomOptions=${encodeURIComponent(value)}`
+    const result = await harness.api.runUrlTrigger(href)
+    expect(result.status).toBe('error')
+    expect(result.operation).toBe('diff')
+    expect(result.runId).toBe('url_bad_opts')
+    expect(result.error.code).toBe('DIFF_FAILED')
+    expect(result.error.message).toMatch(expected)
+    expect(harness.snapdom).not.toHaveBeenCalled()
+    expect(harness.store.commitResult).toHaveBeenCalledTimes(1)
+  })
+})

@@ -34,7 +34,10 @@ npx snapeye diff    <name> --target '<css-selector>'   # compare against it
 npx snapeye record  <name> --target '<css-selector>' --duration 3000
 \`\`\`
 
-Add \`--url\` when the target is not on the dev server's home page.
+Add \`--url\` when the target is not on the dev server's home page. For a page
+with no dev server (an issue repro, a scratch file) add \`--serve path/to/page.html\`
+instead, and \`--snapdom ./dist\` to run it against a local SnapDOM build.
+\`--snapdom-options '{"embedFonts":true}'\` applies SnapDOM options to one run.
 
 Exit codes: 0 = ok, 1 = the run failed (read \`error.code\`), 2 = SnapEye or the
 dev server is not running, 3 = \`--fail-on-change\` and the diff changed.

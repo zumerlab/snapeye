@@ -29,6 +29,15 @@ It must never grow navigation, interaction, or judgement.
 Capture, diff, and record must depend on the `ArtifactStore` contract, not on
 Vite or Node paths. The Vite plugin is the only V1 host adapter.
 
+`snapeye serve` and `--serve` are not a second adapter: they start Vite with the
+plugin over a directory (`src/node/standalone.js`). What a lone HTML file lacks
+is `node_modules`, so the client's three bare imports are aliased to the files
+this installed SnapEye resolves and dependency discovery is switched off. That
+is the whole mechanism; a host that needs more than that is a Vite question.
+`--snapdom` aliases `@zumer/snapdom` to a local build and rewrites CDN
+`<script>` tags on the page to the same build, so a fix can be verified before
+it is published.
+
 The contract is:
 
 ```ts
@@ -93,6 +102,16 @@ visible `result.json` means a run is terminal.
   not assumed: 7 false positives in 8 runs before, 0 in 12 after.
 - A false "changed" is the worst defect this package can ship. Anything that
   makes an unchanged page report a change is a release blocker.
+- `current.svg` is a run artifact, never part of a baseline. It is the SVG
+  SnapDOM rasterized, kept so an agent can read why a capture looks the way it
+  does (`@font-face` count, `data:font` URLs, `<image>` sources) instead of
+  guessing from pixels. Recording frames never keep it.
+- A `snapdomOptions` URL value that does not parse fails the run with a terminal
+  error. Capturing with options other than the ones asked for would publish a
+  verdict about the wrong configuration.
+- `--open-with` is a shell fragment, not a program name: quoting must survive
+  (`open -a "Google Chrome"`). Splitting on spaces silently opened nothing and
+  burned the whole timeout.
 
 ## Public API compatibility
 

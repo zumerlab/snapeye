@@ -126,6 +126,8 @@ export interface SnapEyeAttachOptions {
   /** Ceiling for the settle wait. Defaults to 2500. */
   settleTimeout?: number
   defaultTarget?: () => SnapEyeTarget | null | undefined
+  /** Keep `current.svg` next to every capture and diff. Defaults to true. */
+  svg?: boolean
   snapdomOptions?: SnapdomOptions
   diffOptions?: SnapEyePixelDiffOptions
   filmstripOptions?: SnapEyeFilmstripOptions
@@ -190,6 +192,7 @@ export interface SnapEyePublicOptions {
   stabilize: boolean
   settle: boolean
   waitFor: number | string | null
+  svg: boolean
   snapdomOptions: SnapdomOptions
 }
 
